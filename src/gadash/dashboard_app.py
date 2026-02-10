@@ -285,7 +285,8 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
             struct = data["struct128_topk"]
             if idx < 0 or idx >= struct.shape[0]:
                 return JSONResponse({"error": "idx out of range"}, status_code=404)
-            x = torch.from_numpy(struct[idx].astype(np.float32))[None, None, ...]  # (1,1,128,128)
+            # Surrogate expects x_binary shaped [B,128,128] in [0,1].
+            x = torch.from_numpy(struct[idx].astype(np.float32))[None, ...]  # (1,128,128)
             with torch.no_grad():
                 y = surrogate.predict(x)
                 if hasattr(y, "pred_rgbc"):

@@ -212,7 +212,7 @@ def create_app(progress_dir: str, cfg_path: str, paths_path: str) -> FastAPI:
         args = [
             os.environ.get("PYTHON", "python"),
             "-m",
-            "scripts.run_ga",
+            "gadash.run_ga",
             "--config",
             cfg_path,
             "--paths",

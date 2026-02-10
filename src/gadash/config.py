@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any
 
@@ -96,6 +97,15 @@ def load_yaml(path: str | Path) -> dict[str, Any]:
     return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
 
 
+def _expand_path(s: str | None) -> str | None:
+    if s is None:
+        return None
+    # Allow ASCII-only configs using ${USERPROFILE} / %USERPROFILE%.
+    s2 = os.path.expandvars(str(s))
+    s2 = os.path.expanduser(s2)
+    return s2
+
+
 def load_config(main_cfg_path: str | Path, paths_cfg_path: str | Path | None = None) -> AppConfig:
     main = load_yaml(main_cfg_path)
     paths = load_yaml(paths_cfg_path) if paths_cfg_path else {}
@@ -106,8 +116,8 @@ def load_config(main_cfg_path: str | Path, paths_cfg_path: str | Path | None = N
 
     return AppConfig(
         paths=PathsConfig(
-            checkpoint_path=_deep_get(paths, "checkpoint_path", default=None),
-            cr_recon_root=_deep_get(paths, "cr_recon_root", default=None),
+            checkpoint_path=_expand_path(_deep_get(paths, "checkpoint_path", default=None)),
+            cr_recon_root=_expand_path(_deep_get(paths, "cr_recon_root", default=None)),
         ),
         ga=GAConfig(
             population=int(_deep_get(main, "ga", "population", default=128)),

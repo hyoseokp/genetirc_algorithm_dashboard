@@ -1,2 +1,2 @@
-checkpoint_path: C:/Users/?곌뎄??checkpoints/cnn_xattn_epoch_0499.pt
-cr_recon_root: C:/Users/?곌뎄??data_CR_dashboard_toggles_nosmudge/code/CR_recon
+﻿checkpoint_path: ${USERPROFILE}/checkpoints/cnn_xattn_epoch_0499.pt
+cr_recon_root: ${USERPROFILE}/data_CR_dashboard_toggles_nosmudge/code/CR_recon

@@ -41,3 +41,13 @@ def purity_matrix(pred_rgbc: torch.Tensor, rgb_weights: dict[str, float]) -> tor
             band_j = idx[band_name]
             A[:, det_i, band_j] = pred_rgbc[:, det_i, sl].mean(dim=-1) * w_det
     return A
+
+
+def merge_rggb_to_rgb(t_rggb: torch.Tensor) -> torch.Tensor:
+    """RGGB (B,2,2,C) -> RGB (B,3,C)."""
+    if t_rggb.ndim != 4 or tuple(t_rggb.shape[1:3]) != (2, 2):
+        raise ValueError(f"t_rggb must be (B,2,2,C), got {tuple(t_rggb.shape)}")
+    r = t_rggb[:, 0, 0, :]
+    g = 0.5 * (t_rggb[:, 0, 1, :] + t_rggb[:, 1, 0, :])
+    b = t_rggb[:, 1, 1, :]
+    return torch.stack([r, g, b], dim=1)

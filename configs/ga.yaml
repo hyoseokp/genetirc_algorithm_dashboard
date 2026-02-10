@@ -35,10 +35,13 @@ spectra:
     B: 1.0
 
 loss:
-  spec_weight: 1.0
-  reg_weight: 0.02
+  w_purity: 1.0
+  w_abs: 0.0
+  w_gray: 0.1
+  w_tv: 0.01
+  w_fill: 1.0
   fill_min: 0.2
-  fill_weight: 0.2
+  fill_max: 0.5
 
 io:
   topk: 8

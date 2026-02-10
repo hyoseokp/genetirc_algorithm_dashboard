@@ -1,238 +1,993 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>GA Dashboard</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
-  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <style>
-    :root{
-      --bg:#0b0f14; --panel:#101826; --panel2:#0f1622; --text:#e7eefb; --muted:#93a4be;
-      --accent:#58a6ff; --good:#2dd4bf; --bad:#fb7185; --grid:rgba(255,255,255,0.08);
-    }
-    body{margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; background:radial-gradient(1200px 600px at 30% 10%, #17233a, transparent), var(--bg); color:var(--text);}
-    header{display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid rgba(255,255,255,0.08);}
-    h1{font-size:16px; margin:0; letter-spacing:0.2px;}
-    .row{display:flex; gap:12px; padding:12px;}
-    .panel{background:linear-gradient(180deg, rgba(255,255,255,0.03), transparent), var(--panel); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:12px;}
-    .half{flex:1; min-width:0;}
-    .controls{display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
-    .btn{background:#18243a; color:var(--text); border:1px solid rgba(255,255,255,0.12); padding:8px 10px; border-radius:10px; cursor:pointer;}
-    .btn:hover{border-color:rgba(255,255,255,0.24);}
-    .toggle{display:flex; gap:8px; align-items:center; color:var(--muted); font-size:12px;}
-    select{background:#0c1422; color:var(--text); border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:6px 10px;}
-    .muted{color:var(--muted); font-size:12px;}
-    .grid{display:flex; gap:12px; padding:0 12px 12px 12px;}
-    .grid .left{flex:1.4; min-width:0;}
-    .grid .right{flex:1; min-width:0;}
-    .topk{display:grid; grid-template-columns:repeat(4, 1fr); gap:8px;}
-    .tile{background:var(--panel2); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:8px;}
-    .tile img{width:100%; image-rendering:pixelated; border-radius:8px; background:#000;}
-    .klabel{font-size:12px; color:var(--muted); margin:6px 0 0 0;}
-    .katexbox{overflow:auto; max-height:420px; line-height:1.5;}
-    .barwrap{height:8px; background:rgba(255,255,255,0.08); border-radius:999px; overflow:hidden;}
-    .bar{height:100%; width:0%; background:linear-gradient(90deg, var(--accent), var(--good));}
-  </style>
-</head>
-<body>
-  <header>
-    <h1>Genetic Algorithm Dashboard</h1>
-    <div class="controls">
-      <button class="btn" id="btnStart">Run</button>
-      <button class="btn" id="btnStop">Stop</button>
-      <button class="btn" id="btnReset">Reset</button>
-      <span class="toggle">Device
-        <select id="device"><option value="cuda">cuda</option><option value="cpu">cpu</option></select>
-      </span>
-      <span class="toggle">TopK
-        <select id="mode"><option value="best">best</option><option value="cur">current</option></select>
-      </span>
-      <span class="toggle"><input type="checkbox" id="invert" checked> invert view</span>
-      <span class="muted" id="status">idle</span>
-    </div>
-  </header>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>CR Inverse Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js" onerror="window.chartJsLoadFailed=true;"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.0/dist/katex.min.css" onerror="window.katexLoadFailed=true;">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.0/dist/katex.min.js" onerror="window.katexLoadFailed=true;"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.0/dist/contrib/auto-render.min.js" onerror="window.katexLoadFailed=true;"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      :root {
+        --bg: #f1f5f9;
+        --card: #ffffff;
+        --header-bg: #0f172a;
+        --text: #1e293b;
+        --muted: #94a3b8;
+        --border: #e2e8f0;
+        --accent: #6366f1;
+        --good: #22c55e;
+        --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+        --shadow-md: 0 4px 6px rgba(0,0,0,0.07), 0 2px 4px rgba(0,0,0,0.06);
+        --radius: 10px;
+        --panel-aspect: 2 / 1;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        padding: 16px;
+        min-height: 100vh;
+      }
+      .header {
+        background: var(--header-bg);
+        color: white;
+        padding: 14px 20px;
+        border-radius: var(--radius);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+      .header-title { font-size: 18px; font-weight: 800; letter-spacing: -0.3px; }
+      .header-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--muted);
+        background: #1e293b;
+        padding: 6px 10px;
+        border-radius: 999px;
+      }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; }
+      .dot.on { background: var(--good); box-shadow: 0 0 6px var(--good); }
 
-  <div class="row">
-    <div class="panel half">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-        <div>Optimization Progress</div>
-        <div class="muted" id="progText">-</div>
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+        align-items: start;
+      }
+      .row2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        align-items: start;
+      }
+      @media (max-width: 960px) {
+        .row2 { grid-template-columns: 1fr; }
+      }
+      .card {
+        background: var(--card);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow-md);
+        border: 1px solid var(--border);
+        padding: 14px 16px;
+      }
+      .controls {
+        display: grid;
+        grid-template-columns: 1.2fr 1fr 1fr 1fr 1fr 1fr 1fr auto;
+        gap: 10px;
+        align-items: end;
+        margin-top: 10px;
+      }
+      @media (max-width: 1100px) {
+        .controls { grid-template-columns: 1fr 1fr 1fr; }
+      }
+      .field label {
+        display: block;
+        font-size: 11px;
+        color: #64748b;
+        font-weight: 700;
+        margin-bottom: 4px;
+      }
+      .field input, .field select {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 8px 10px;
+        background: #f8fafc;
+        color: #0f172a;
+        font-size: 12px;
+        outline: none;
+      }
+      .field input:focus, .field select:focus {
+        border-color: rgba(99,102,241,0.55);
+        box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+      }
+      .toggleRow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #f8fafc;
+        height: 38px;
+      }
+      .toggleRow .kpi { margin: 0; }
+      .btn {
+        appearance: none;
+        border: 0;
+        border-radius: 12px;
+        padding: 10px 14px;
+        background: linear-gradient(180deg, #111827, #0b1220);
+        color: #fff;
+        font-weight: 800;
+        font-size: 12px;
+        cursor: pointer;
+        height: 38px;
+        box-shadow: var(--shadow);
+      }
+      .btn:active { transform: translateY(1px); }
+      .btn.secondary {
+        background: #f8fafc;
+        color: #0f172a;
+        border: 1px solid var(--border);
+        box-shadow: none;
+      }
+      .btn.danger {
+        background: linear-gradient(180deg, #ef4444, #b91c1c);
+      }
+      .runStatus {
+        margin-top: 8px;
+        font-size: 12px;
+        color: #64748b;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      details.adv { margin-top: 10px; }
+      details.adv summary {
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 800;
+        color: #0f172a;
+        user-select: none;
+      }
+      .controls.loss {
+        grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr 1fr;
+        margin-top: 8px;
+      }
+      @media (max-width: 1100px) {
+        .controls.loss { grid-template-columns: 1fr 1fr 1fr; }
+      }
+      .panel {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .kpi { font-size: 12px; color: #64748b; }
+      .kpi b { color: var(--text); }
+      .bar {
+        width: 100%; height: 6px; border-radius: 999px;
+        background: #e5e7eb; overflow: hidden; margin-top: 8px;
+      }
+      .bar > div {
+        height: 100%; width: 0%;
+        background: linear-gradient(90deg, #60a5fa, #34d399);
+        transition: width 0.2s ease;
+      }
+      .segmented {
+        display: inline-flex;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+        background: #f8fafc;
+      }
+      .seg-btn {
+        appearance: none;
+        border: 0;
+        background: transparent;
+        color: #475569;
+        padding: 6px 10px;
+        font-size: 11px;
+        font-weight: 700;
+        cursor: pointer;
+        border-right: 1px solid var(--border);
+      }
+      .seg-btn:last-child { border-right: 0; }
+      .seg-btn.active { background: #0f172a; color: white; }
+      /* Keep optima + spectrum chart areas the same height. */
+      .chartBox {
+        position: relative;
+        width: 100%;
+        height: 360px;
+        margin-top: 10px;
+      }
+      .chartBox canvas { width: 100% !important; height: 100% !important; }
+
+      .thumbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
+      @media (max-width: 960px) { .thumbs { grid-template-columns: repeat(3, 1fr); } }
+      @media (max-width: 600px) { .thumbs { grid-template-columns: repeat(2, 1fr); } }
+      .thumb {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 8px;
+        background: #f8fafc;
+        cursor: pointer;
+      }
+      .thumb.sel { outline: 2px solid var(--accent); }
+      .thumb img { width: 100%; border-radius: 8px; image-rendering: pixelated; display: block; }
+      .cap { font-size: 11px; color: #64748b; margin-top: 6px; }
+      .hint { font-size: 11px; color: #64748b; margin-top: 6px; }
+      .purityBox {
+        margin-top: 10px;
+        background: #f8fafc;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+        color: #0f172a;
+        font-size: 12px;
+        line-height: 1.6;
+      }
+      .purityMono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace; font-size: 11px; color: #334155; }
+      .formulaBox {
+        margin-top: 10px;
+        background: #f8fafc;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px;
+        color: #0f172a;
+        overflow: auto;
+        max-height: 420px;
+      }
+      .formulaLatex {
+        font-size: 13px;
+        line-height: 1.85;
+        white-space: pre-wrap;
+      }
+      .katex { font-size: 1.0em; }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <div>
+        <div class="header-title">CR Inverse Dashboard</div>
+        <div class="header-sub">Optimization loss, progress, Top-K, and spectrum</div>
       </div>
-      <div class="barwrap"><div class="bar" id="bar"></div></div>
-      <canvas id="lossChart" style="height:320px; margin-top:10px;"></canvas>
+      <div class="status"><span id="dot" class="dot"></span><span id="statusText">disconnected</span></div>
     </div>
-    <div class="panel half">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-        <div>Spectrum (Top-1)</div>
-        <div class="muted" id="specText">-</div>
+
+    <div class="grid">
+      <!-- Run controls -->
+      <div class="card panel">
+        <div class="row">
+          <div class="kpi"><b>Run</b> start optimization from dashboard</div>
+          <div class="toggleRow">
+            <div class="kpi"><b>FDTD verify</b></div>
+            <input id="fdtdToggle" type="checkbox" />
+          </div>
+        </div>
+        <div class="controls">
+          <div class="field">
+            <label for="inDevice">device</label>
+            <select id="inDevice">
+              <option value="cpu">cpu</option>
+              <option value="cuda" selected>cuda</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="inNStart">n_start</label>
+            <input id="inNStart" type="number" min="1" step="1" value="100" />
+          </div>
+          <div class="field">
+            <label for="inNSteps">n_steps</label>
+            <input id="inNSteps" type="number" min="1" step="1" value="1000" />
+          </div>
+          <div class="field">
+            <label for="inTopk">topk</label>
+            <input id="inTopk" type="number" min="1" step="1" value="10" />
+          </div>
+          <div class="field">
+            <label for="inRobust">robustness_samples</label>
+            <input id="inRobust" type="number" min="1" step="1" value="2" />
+          </div>
+          <div class="field">
+            <label for="inChunk">chunk_size</label>
+            <input id="inChunk" type="number" min="1" step="1" value="64" />
+          </div>
+          <div class="field">
+            <label for="inFdtdEvery">fdtd_every</label>
+            <input id="inFdtdEvery" type="number" min="0" step="1" value="10" />
+          </div>
+          <button class="btn" id="runBtn">Run optimization</button>
+          <button class="btn secondary" id="stopBtn" type="button">Stop</button>
+          <button class="btn danger" id="resetBtn" type="button">Reset</button>
+        </div>
+        <div class="runStatus" id="runStatus"></div>
+
+        <details class="adv">
+          <summary>Loss weights</summary>
+          <div class="controls loss">
+            <div class="field">
+              <label for="inWPurity">w_purity</label>
+              <input id="inWPurity" type="number" step="0.01" value="1.0" />
+            </div>
+            <div class="field">
+              <label for="inWAbs">w_abs</label>
+              <input id="inWAbs" type="number" step="0.01" value="0.0" />
+            </div>
+            <div class="field">
+              <label for="inWGray">w_gray</label>
+              <input id="inWGray" type="number" step="0.01" value="0.1" />
+            </div>
+            <div class="field">
+              <label for="inWTV">w_tv</label>
+              <input id="inWTV" type="number" step="0.001" value="0.01" />
+            </div>
+            <div class="field">
+              <label for="inWFill">w_fill</label>
+              <input id="inWFill" type="number" step="0.1" value="1.0" />
+            </div>
+            <div class="field">
+              <label for="inFillMin">fill_min</label>
+              <input id="inFillMin" type="number" step="0.01" value="0.2" />
+            </div>
+            <div class="field">
+              <label for="inFillMax">fill_max</label>
+              <input id="inFillMax" type="number" step="0.01" value="0.5" />
+            </div>
+          </div>
+        </details>
       </div>
-      <canvas id="specChart" style="height:360px;"></canvas>
-    </div>
-  </div>
 
-  <div class="grid">
-    <div class="panel left">
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <div>Top-K Structures</div>
-        <div class="muted">auto-refresh</div>
+      <!-- Top row: optima (left) + spectrum (right), same size -->
+      <div class="row2">
+        <div class="card panel">
+        <div class="row">
+          <div class="kpi"><b>Optimization</b> <span id="kpiStep">-</span></div>
+          <div class="row" style="gap:8px">
+            <div class="kpi">Y</div>
+            <div class="segmented" id="scaleToggle">
+              <button class="seg-btn" data-scale="log">Log</button>
+              <button class="seg-btn" data-scale="linear">Linear</button>
+            </div>
+            <div class="kpi">Window</div>
+            <div class="segmented" id="windowToggle">
+              <button class="seg-btn" data-window="all">All</button>
+              <button class="seg-btn" data-window="200">200</button>
+              <button class="seg-btn" data-window="50">50</button>
+            </div>
+          </div>
+        </div>
+        <div class="bar"><div id="progFill"></div></div>
+        <div class="row" style="margin-top:8px">
+          <div class="kpi">loss_total: <b id="kpiLoss">-</b></div>
+        </div>
+        <div class="chartBox"><canvas id="lossChart"></canvas></div>
+        </div>
+
+        <div class="card panel">
+        <div class="row">
+          <div class="kpi"><b>Spectrum</b> <span id="kpiSpec">-</span></div>
+          <div class="kpi" id="specHint">click a thumbnail</div>
+        </div>
+        <div class="chartBox"><canvas id="specChart"></canvas></div>
       </div>
-      <div class="topk" id="topk"></div>
-    </div>
-    <div class="panel right">
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <div>Loss Definition</div>
-        <div class="muted">KaTeX</div>
       </div>
-      <div class="katexbox" id="latex"></div>
-    </div>
-  </div>
 
-<script>
-const $ = (id)=>document.getElementById(id);
-let lossChart, specChart;
+      <!-- Bottom row: Top-K (left) + Loss formula (right) -->
+      <div class="row2">
+        <div class="card panel">
+          <div class="row">
+            <div class="kpi"><b>Top-K</b> <span id="kpiTopk">-</span></div>
+          <div class="row" style="gap:8px">
+              <div class="kpi">Mode</div>
+              <div class="segmented" id="topkModeToggle">
+                <button class="seg-btn" data-topk_mode="best">Best</button>
+                <button class="seg-btn" data-topk_mode="cur">Current</button>
+              </div>
+              <div class="toggleRow" style="height:32px;padding:6px 10px">
+                <div class="kpi"><b>Invert</b></div>
+                <input id="invertToggle" type="checkbox" />
+              </div>
+              <div class="kpi" id="topkHint"></div>
+            </div>
+          </div>
+          <div class="thumbs" id="thumbs"></div>
+          <div class="hint">Tip: click a thumbnail to update spectrum.</div>
+        </div>
 
-function makeLossChart(){
-  const ctx = $("lossChart");
-  lossChart = new Chart(ctx, {
-    type:'line',
-    data:{labels:[], datasets:[
-      {label:'loss_best', data:[], borderColor:'#58a6ff', tension:0.25, pointRadius:0},
-      {label:'loss_mean', data:[], borderColor:'#2dd4bf', tension:0.25, pointRadius:0},
-    ]},
-    options:{responsive:true, maintainAspectRatio:false,
-      plugins:{legend:{labels:{color:'#e7eefb'}}},
-      scales:{x:{ticks:{color:'#93a4be'}, grid:{color:'rgba(255,255,255,0.06)'}},
-              y:{ticks:{color:'#93a4be'}, grid:{color:'rgba(255,255,255,0.06)'}}}
-    }
-  });
-}
-
-function makeSpecChart(){
-  const ctx = $("specChart");
-  specChart = new Chart(ctx, {
-    type:'line',
-    data:{labels:[], datasets:[
-      {label:'R', data:[], borderColor:'#fb7185', tension:0.15, pointRadius:0},
-      {label:'G', data:[], borderColor:'#22c55e', tension:0.15, pointRadius:0},
-      {label:'B', data:[], borderColor:'#60a5fa', tension:0.15, pointRadius:0},
-    ]},
-    options:{responsive:true, maintainAspectRatio:false,
-      plugins:{legend:{labels:{color:'#e7eefb'}}},
-      scales:{x:{ticks:{color:'#93a4be'}, grid:{color:'rgba(255,255,255,0.06)'}},
-              y:{min:0, max:1, ticks:{color:'#93a4be'}, grid:{color:'rgba(255,255,255,0.06)'}}}
-    }
-  });
-}
-
-async function api(path, opts={}){
-  const r = await fetch(path, opts);
-  if(!r.ok) throw new Error(await r.text());
-  return await r.json();
-}
-
-async function refreshLoss(){
-  const j = await api('/api/metrics');
-  const lines = j.lines || [];
-  const labels = lines.map(x=>x.gen);
-  const best = lines.map(x=>x.loss_best);
-  const mean = lines.map(x=>x.loss_total);
-  lossChart.data.labels = labels;
-  lossChart.data.datasets[0].data = best;
-  lossChart.data.datasets[1].data = mean;
-  lossChart.update('none');
-
-  if(lines.length){
-    const last = lines[lines.length-1];
-    $("progText").textContent = `gen ${last.gen}`;
-  }
-}
-
-async function refreshTopk(){
-  const mode = $("mode").value;
-  const invert = $("invert").checked ? 1 : 0;
-  const info = await api(`/api/topk/latest?mode=${mode}`);
-  if(!info.ok){
-    $("topk").innerHTML = '';
-    return;
-  }
-  const k = info.k;
-  const gen = info.gen;
-  const nodes = [];
-  for(let i=0;i<k;i++){
-    const url = `/api/topk/image?mode=${mode}&k=${i}&invert=${invert}&t=${Date.now()}`;
-    nodes.push(`
-      <div class="tile">
-        <img src="${url}"/>
-        <div class="klabel">k=${i} gen=${gen}</div>
+        <div class="card panel">
+          <div class="row">
+            <div class="kpi"><b>Loss Definition</b></div>
+            <div class="kpi">robust MC: E_{sigma,tau}[L] (Monte Carlo average)</div>
+          </div>
+          <div class="formulaBox">
+            <div class="purityBox" id="purityBox" style="margin-bottom:10px">purity: (waiting for first snapshot)</div>
+            <div class="formulaLatex" id="lossFormula"></div>
+            <pre id="lossFormulaTex" style="display:none"></pre>
+          </div>
+        </div>
       </div>
-    `);
-  }
-  $("topk").innerHTML = nodes.join('');
-}
 
-async function refreshSpectrum(){
-  const mode = $("mode").value;
-  const j = await api(`/api/topk/spectrum?mode=${mode}&k=0`);
-  const pred = j.pred_rgbc;
-  if(!pred) return;
+    <script>
+      const dot = document.getElementById('dot');
+      const statusText = document.getElementById('statusText');
+      const kpiStep = document.getElementById('kpiStep');
+      const kpiLoss = document.getElementById('kpiLoss');
+      const progFill = document.getElementById('progFill');
+      const kpiTopk = document.getElementById('kpiTopk');
+      const thumbs = document.getElementById('thumbs');
+      const topkHint = document.getElementById('topkHint');
+      const kpiSpec = document.getElementById('kpiSpec');
+      const specHint = document.getElementById('specHint');
 
-  // x axis: 400..700 nm with 30 channels
-  const C = pred[0].length;
-  const wmin = 400.0, wmax = 700.0;
-  const xs = Array.from({length:C}, (_,i)=> (wmin + (wmax-wmin)*i/(C-1)).toFixed(1));
-  specChart.data.labels = xs;
-  specChart.data.datasets[0].data = pred[0];
-  specChart.data.datasets[1].data = pred[1];
-  specChart.data.datasets[2].data = pred[2];
-  specChart.update('none');
-}
+      function setStatus(ok, text){
+        dot.classList.toggle('on', ok);
+        statusText.textContent = text;
+      }
+      async function fetchJSON(url){
+        const r = await fetch(url, {cache:'no-store'});
+        if (!r.ok) throw new Error(String(r.status));
+        return await r.json();
+      }
+      function withCacheBust(u, token, invert){
+        try{
+          const url = new URL(u, window.location.href);
+          url.searchParams.set('v', String(token));
+          url.searchParams.set('invert', (invert ? '1' : '0'));
+          return url.pathname + url.search;
+        } catch(e) {
+          // Fallback: naive.
+          const inv = (invert ? '1' : '0');
+          return u + (u.includes('?') ? '&' : '?') + 'v=' + encodeURIComponent(String(token)) + '&invert=' + inv;
+        }
+      }
 
-async function refreshStatus(){
-  const j = await api('/api/status');
-  $("status").textContent = j.running ? 'running' : 'idle';
+      const ui = {
+        scale: localStorage.getItem('loss_scale') || 'log',
+        window: localStorage.getItem('loss_window') || 'all',
+        fdtd: (localStorage.getItem('fdtd_verify') || 'off'),
+        topk_mode: (localStorage.getItem('topk_mode') || 'best'),
+        invert_view: (localStorage.getItem('invert_view') || 'on'),
+        selected: {step:null, idx:0},
+        lastTopkKey: ''
+      };
 
-  // progress bar from latest gen id (coarse)
-  const c = await api('/api/config');
-  const total = (c.ga && c.ga.generations) ? c.ga.generations : 200;
-  const m = await api('/api/metrics');
-  const lines = m.lines || [];
-  const last = lines.length ? lines[lines.length-1] : null;
-  const frac = last ? Math.min(1.0, (last.gen+1)/Math.max(1,total)) : 0.0;
-  $("bar").style.width = `${(frac*100).toFixed(1)}%`;
-}
+      function initSegmented(el, key, values){
+        const buttons = Array.from(el.querySelectorAll('.seg-btn'));
+        function sync(){
+          buttons.forEach(b => b.classList.toggle('active', b.dataset[key] === ui[key]));
+        }
+        buttons.forEach(b => {
+          b.addEventListener('click', () => {
+            ui[key] = b.dataset[key];
+            if (key === 'scale' || key === 'window') localStorage.setItem('loss_' + key, ui[key]);
+            if (key === 'topk_mode') localStorage.setItem('topk_mode', ui[key]);
+            sync();
+            redraw();
+          });
+        });
+        // default
+        if (!values.includes(ui[key])) ui[key] = values[0];
+        sync();
+      }
 
-async function loadLatex(){
-  const j = await api('/api/loss_definition');
-  const el = $("latex");
-  el.textContent = j.latex;
-  renderMathInElement(el, {delimiters:[{left:"$$", right:"$$", display:true},{left:"\\[", right:"\\]", display:true},{left:"\\(", right:"\\)", display:false}]});
-}
+      let lossChart = null;
+      let specChart = null;
 
-$("btnStart").onclick = async ()=>{
-  const device = $("device").value;
-  await api(`/api/run/start?device=${device}`, {method:'POST'});
-  await refreshStatus();
-};
-$("btnStop").onclick = async ()=>{ await api('/api/run/stop', {method:'POST'}); await refreshStatus(); };
-$("btnReset").onclick = async ()=>{ await api('/api/run/reset', {method:'POST'}); await refreshLoss(); await refreshTopk(); await refreshSpectrum(); };
+      function setRunStatus(text){
+        const el = document.getElementById('runStatus');
+        if (el) el.textContent = text || '';
+      }
 
-makeLossChart();
-makeSpecChart();
-loadLatex();
+      function makeLossChart(){
+        const ctx = document.getElementById('lossChart');
+        const gridColor = '#e2e8f0';
+        const tickColor = '#94a3b8';
+        const fontFamily = '-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif';
+        lossChart = new Chart(ctx, {
+          type: 'line',
+          data: { labels: [], datasets: [
+            {
+              label: 'loss_total',
+              data: [],
+              borderColor: '#3b82f6',
+              backgroundColor: 'rgba(59,130,246,0.08)',
+              fill: true,
+              borderWidth: 2,
+              tension: 0.4,
+              pointRadius: 0,
+              pointHoverRadius: 4
+            },
+          ]},
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+              y: {
+                type: 'logarithmic',
+                grid: { color: gridColor },
+                ticks: { color: tickColor, font: { size: 11, family: fontFamily } },
+                title: {
+                  display: true,
+                  text: (ui.scale === 'linear') ? 'Loss' : 'Loss (log)',
+                  color: tickColor,
+                  font: { size: 12, family: fontFamily }
+                }
+              },
+              x: {
+                grid: { color: gridColor, display: false },
+                ticks: { color: tickColor, font: { size: 11, family: fontFamily }, maxTicksLimit: 20 },
+                title: { display: true, text: 'step', color: tickColor, font: { size: 12, family: fontFamily } }
+              }
+            },
+            plugins: {
+              legend: {
+                display: true,
+                position: 'top',
+                labels: { usePointStyle: true, pointStyle: 'line', font: { size: 12, family: fontFamily } }
+              },
+              tooltip: {
+                backgroundColor: '#0f172a',
+                titleFont: { size: 12, family: fontFamily },
+                bodyFont: { size: 11, family: fontFamily },
+                callbacks: {
+                  label: (ctx) => {
+                    const name = (ctx && ctx.dataset && ctx.dataset.label) ? String(ctx.dataset.label) : 'loss';
+                    const v = (ctx && ctx.parsed) ? ctx.parsed.y : null;
+                    if (v == null || !Number.isFinite(v)) return `${name}: --`;
+                    const s = (v >= 0.01) ? v.toFixed(6) : v.toExponential(3);
+                    return `${name}: ${s}`;
+                  },
+                }
+              }
+            }
+          }
+        });
+      }
 
-setInterval(async ()=>{
-  try{
-    await refreshStatus();
-    await refreshLoss();
-    await refreshTopk();
-    await refreshSpectrum();
-  }catch(e){
-    // ignore transient
-  }
-}, 1000);
-</script>
-</body>
+      function makeSpecChart(){
+        const ctx = document.getElementById('specChart');
+        const gridColor = '#e2e8f0';
+        const tickColor = '#94a3b8';
+        const fontFamily = '-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif';
+        specChart = new Chart(ctx, {
+          type: 'line',
+          data: { labels: [], datasets: [
+            // Predicted (forward model): dashed + lighter.
+            { label: 'R pred', data: [], borderColor: 'rgba(239,68,68,0.35)', borderWidth: 2, borderDash: [6,4], pointRadius: 0, tension: 0.4 },
+            { label: 'G pred', data: [], borderColor: 'rgba(34,197,94,0.35)', borderWidth: 2, borderDash: [6,4], pointRadius: 0, tension: 0.4 },
+            { label: 'B pred', data: [], borderColor: 'rgba(59,130,246,0.35)', borderWidth: 2, borderDash: [6,4], pointRadius: 0, tension: 0.4 },
+            // FDTD verified: solid.
+            { label: 'R fdtd', data: [], borderColor: '#ef4444', borderWidth: 2, pointRadius: 0, tension: 0.4, hidden: true },
+            { label: 'G fdtd', data: [], borderColor: '#22c55e', borderWidth: 2, pointRadius: 0, tension: 0.4, hidden: true },
+            { label: 'B fdtd', data: [], borderColor: '#3b82f6', borderWidth: 2, pointRadius: 0, tension: 0.4, hidden: true },
+          ]},
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+              x: {
+                grid: { display: false },
+                ticks: { color: tickColor, font: { size: 10, family: fontFamily }, maxTicksLimit: 20 },
+                title: { display: true, text: 'wavelength (nm)', color: tickColor, font: { size: 11, family: fontFamily } }
+              },
+              y: {
+                grid: { color: gridColor },
+                ticks: { color: tickColor, font: { size: 10, family: fontFamily } },
+                title: { display: true, text: 'intensity', color: tickColor, font: { size: 11, family: fontFamily } }
+              }
+            },
+            plugins: {
+              legend: {
+                display: true,
+                position: 'top',
+                labels: { usePointStyle: true, pointStyle: 'line', font: { size: 11, family: fontFamily }, boxWidth: 20 }
+              },
+              tooltip: {
+                backgroundColor: '#0f172a',
+                titleFont: { size: 12, family: fontFamily },
+                bodyFont: { size: 11, family: fontFamily }
+              }
+            }
+          }
+        });
+      }
+
+      function updateLossScale(){
+        if (!lossChart) return;
+        lossChart.options.scales.y.type = (ui.scale === 'log') ? 'logarithmic' : 'linear';
+        if (lossChart.options.scales.y.title) {
+          lossChart.options.scales.y.title.text = (ui.scale === 'linear') ? 'Loss' : 'Loss (log)';
+        }
+      }
+
+      let lastStatus = null;
+
+      async function redraw(){
+        // use cached status to update chart options quickly
+        if (lastStatus) {
+          applyStatus(lastStatus);
+        }
+      }
+
+      function applyStatus(st){
+        const meta = st.meta || {};
+        const series = st.series || {};
+        const steps = series.steps || [];
+        const total = Number(meta.n_steps);
+
+        const latest = st.latest || {};
+        const curStep = Number(latest.step);
+        if (Number.isFinite(curStep)) {
+          kpiStep.textContent = (Number.isFinite(total) && total>0) ? `(step ${curStep} / ${total-1})` : `(step ${curStep})`;
+          if (Number.isFinite(total) && total>0) {
+            const pct = Math.max(0, Math.min(1, curStep / Math.max(1, total-1))) * 100;
+            progFill.style.width = pct.toFixed(1) + '%';
+          }
+        }
+        const lt = Number(latest.loss_total);
+        kpiLoss.textContent = Number.isFinite(lt) ? lt.toFixed(6) : '-';
+
+        // windowing
+        let windowN = ui.window === 'all' ? null : Number(ui.window);
+        let startIdx = 0;
+        if (windowN && steps.length > windowN) startIdx = steps.length - windowN;
+
+        const x = steps.slice(startIdx);
+        const yTotal = (series.loss_total || []).slice(startIdx);
+
+        updateLossScale();
+        lossChart.data.labels = x.map(String);
+        lossChart.data.datasets[0].data = yTotal;
+        lossChart.update();
+
+        renderLatexFromMeta(meta);
+      }
+
+      function numOr(x, d){
+        const v = Number(x);
+        return Number.isFinite(v) ? v : d;
+      }
+
+      function renderLatexFromMeta(meta){
+        // Prefer meta.loss from run_meta.json (written by inverse_opt.py).
+        const L = (meta && meta.loss) ? meta.loss : {};
+        const S = (meta && meta.spectra) ? meta.spectra : {};
+        const W = (S && S.rgb_weights) ? S.rgb_weights : {};
+        const w_purity = numOr(L.w_purity, 1.0);
+        const w_abs = numOr(L.w_abs, 0.0);
+        const w_gray = numOr(L.w_gray, 0.1);
+        const w_tv = numOr(L.w_tv, 0.01);
+        const w_fill = numOr(L.w_fill, 1.0);
+        const fill_min = numOr(L.fill_min, 0.2);
+        const fill_max = numOr(L.fill_max, 0.5);
+        const wR = numOr(W.R, 1.0);
+        const wG = numOr(W.G, 1.0);
+        const wB = numOr(W.B, 1.0);
+
+        // Keep the original KaTeX auto-render approach: inject $$...$$ and call renderMathInElement.
+        const texBody = `\\begin{aligned}
+&\\textbf{RGB weighting (before }A\\textbf{):}\\\\
+&\\qquad \\tilde{s}_{R,k}=${wR.toFixed(2)}\\,s_{R,k},\\quad
+\\tilde{s}_{G,k}=${wG.toFixed(2)}\\,s_{G,k},\\quad
+\\tilde{s}_{B,k}=${wB.toFixed(2)}\\,s_{B,k}.\\\\[6pt]
+&\\textbf{Purity matrix (30ch bins):}\\\\
+&\\qquad I_B=\\{0,\\dots,9\\},\\ I_G=\\{10,\\dots,19\\},\\ I_R=\\{20,\\dots,29\\}.\\\\
+&\\qquad A_{c,b}=\\frac{1}{|I_b|}\\sum_{k\\in I_b} \\tilde{s}_{c,k},\\qquad A\\in\\mathbb{R}^{3\\times 3}.\\\\[8pt]
+&\\textbf{Spectral loss:}\\\\
+&\\qquad L_{\\mathrm{purity}}=\\lVert A-I\\rVert_F^2,\\qquad
+L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
+&\\qquad L_{\\mathrm{spec}}=${w_purity.toFixed(3)}\\,L_{\\mathrm{purity}}+${w_abs.toFixed(3)}\\,L_{\\mathrm{abs}}.\\\\[8pt]
+&\\textbf{Regularization:}\\\\
+&\\qquad L_{\\mathrm{gray}}=\\mathrm{mean}(u(1-u)),\\qquad L_{\\mathrm{tv}}=\\mathrm{TV}(u).\\\\
+&\\qquad L_{\\mathrm{reg}}=${w_gray.toFixed(3)}\\,L_{\\mathrm{gray}}+${w_tv.toFixed(3)}\\,L_{\\mathrm{tv}}.\\\\[8pt]
+&\\textbf{Fill constraint:}\\\\
+&\\qquad f=\\mathrm{mean}(x),\\quad f\\in[${fill_min.toFixed(2)},\\ ${fill_max.toFixed(2)}].\\\\
+&\\qquad L_{\\mathrm{fill}}=\\mathrm{softplus}(f_{\\min}-f)^2+\\mathrm{softplus}(f-f_{\\max})^2.\\\\[8pt]
+&\\textbf{Total (robust MC):}\\\\
+&\\qquad L_{\\mathrm{total}}=\\mathbb{E}_{(\\sigma,\\tau)}\\Big[L_{\\mathrm{spec}}+L_{\\mathrm{reg}}+${w_fill.toFixed(3)}\\,L_{\\mathrm{fill}}\\Big].
+\\end{aligned}`;
+
+        const box = document.getElementById('lossFormula');
+        if (!box) return;
+        box.textContent = `$$\n${texBody}\n$$`;
+        if (window.renderMathInElement) {
+          try{
+            renderMathInElement(box, {
+              delimiters: [{left:'$$', right:'$$', display:true}, {left:'$', right:'$', display:false}]
+            });
+          } catch(e) {}
+        }
+      }
+
+      async function tick(){
+        try{
+          await fetchJSON('/api/ping');
+          setStatus(true, 'live');
+        } catch(e) {
+          setStatus(false, 'disconnected');
+          return;
+        }
+
+        try{
+          const st = await fetchJSON('/api/status?window=all');
+          lastStatus = st;
+          applyStatus(st);
+        } catch(e) { /* ignore */ }
+
+        // Run status
+        try{
+          const rs = await fetchJSON('/api/run/status');
+          if (rs.running) {
+            const tail = rs.tail || [];
+            setRunStatus('running: ' + (tail.length ? tail[tail.length-1] : '...'));
+          } else if (rs.last_exit_code != null) {
+            setRunStatus('last exit: ' + rs.last_exit_code);
+          }
+        } catch(e) { /* ignore */ }
+
+        // TopK
+        try{
+          const t = await fetchJSON(`/api/topk/latest?mode=${encodeURIComponent(ui.topk_mode)}`);
+          if (t.step == null) {
+            kpiTopk.textContent = '(no snapshot)';
+            thumbs.innerHTML = '';
+            topkHint.textContent = '';
+            return;
+          }
+          const key = String(t.mode||ui.topk_mode) + ':' + String(t.step) + ':' + String(t.k);
+          kpiTopk.textContent = `(step ${t.step}, K=${t.k}, mode=${t.mode||ui.topk_mode})`;
+          if (key !== ui.lastTopkKey) {
+            ui.lastTopkKey = key;
+            const imgs = t.images || [];
+            const fill = t.fill_frac || [];
+            const best = (t.metrics && t.metrics.metric_best_loss) ? t.metrics.metric_best_loss : null;
+            const cur = (t.metrics && t.metrics.metric_cur_loss) ? t.metrics.metric_cur_loss : null;
+            let html = '';
+            const maxShow = Math.min(imgs.length, 8);
+            for (let i=0;i<maxShow;i++){
+              const inv = (ui.invert_view === 'on');
+              const src = withCacheBust(imgs[i], t.step, inv);
+              const cap = [
+                (ui.topk_mode === 'cur') && cur && cur[i]!=null ? `cur_loss=${Number(cur[i]).toFixed(6)}` : null,
+                (ui.topk_mode !== 'cur') && best && best[i]!=null ? `best_loss=${Number(best[i]).toFixed(6)}` : null,
+                fill && fill[i]!=null ? `fill=${Number(fill[i]).toFixed(3)}` : null
+              ].filter(Boolean).join('  ') || `k=${i}`;
+              html += `<div class="thumb" data-step="${t.step}" data-idx="${i}"><img src="${src}" onerror="this.closest('.thumb').classList.add('err'); this.alt='image failed';" /><div class="cap">${cap}</div></div>`;
+            }
+            thumbs.innerHTML = html;
+            topkHint.textContent = 'click a thumb to plot spectrum';
+
+            // auto-select k=0
+            ui.selected.step = t.step;
+            ui.selected.idx = 0;
+            await loadSpectrum(t.step, 0);
+          }
+        } catch(e) { /* ignore */ }
+
+        // Purity debug
+        try{
+          const p = await fetchJSON('/api/purity/latest');
+          const el = document.getElementById('purityBox');
+          if (el && p && p.step != null) {
+            const b = p.best || {};
+            const c = p.cur || {};
+            const fmtA = (A) => {
+              if (!A || !A.length) return '--';
+              return A.map(r => r.map(x => Number(x).toFixed(3)).join('  ')).join('\\n');
+            };
+            el.innerHTML = `
+              <div class="kpi"><b>Purity Debug</b> (step ${p.step})</div>
+              <div class="kpi">best: diag=${(b.diag||[]).map(x=>Number(x).toFixed(3)).join(', ')} offdiag_mean=${Number(b.offdiag_mean||0).toFixed(4)} loss0=${Number(b.loss0||0).toFixed(6)}</div>
+              <div class="purityMono">${fmtA(b.A).replace(/\\n/g,'<br/>')}</div>
+              <div class="kpi" style="margin-top:8px">cur: diag=${(c.diag||[]).map(x=>Number(x).toFixed(3)).join(', ')} offdiag_mean=${Number(c.offdiag_mean||0).toFixed(4)} loss0=${Number(c.loss0||0).toFixed(6)}</div>
+              <div class="purityMono">${fmtA(c.A).replace(/\\n/g,'<br/>')}</div>
+            `;
+          }
+        } catch(e) { /* ignore */ }
+      }
+
+      async function loadSpectrum(step, idx){
+        kpiSpec.textContent = `(step ${step}, k=${idx})`;
+        try{
+          const s = await fetchJSON(`/api/topk/${step}/${idx}/spectrum?mode=${encodeURIComponent(ui.topk_mode)}`);
+          const rgb = s.rgb || null;
+          if (!rgb) throw new Error('no rgb');
+          const C = rgb[0].length;
+          // Default wavelength grid: 400..700 nm, evenly spaced over C channels.
+          const wl = Array.from({length: C}, (_,i) => 400 + (300 * i) / Math.max(1, (C - 1)));
+          specChart.data.labels = wl.map(v => v.toFixed(0));
+          specChart.data.datasets[0].data = rgb[0];
+          specChart.data.datasets[1].data = rgb[1];
+          specChart.data.datasets[2].data = rgb[2];
+          // Hide FDTD datasets by default; show only if loaded.
+          specChart.data.datasets[3].hidden = true;
+          specChart.data.datasets[4].hidden = true;
+          specChart.data.datasets[5].hidden = true;
+
+          if (ui.fdtd === 'on') {
+            try{
+              const f = await fetchJSON(`/api/topk/${step}/${idx}/fdtd_spectrum`);
+              if (f && f.rgb) {
+                const frgb = f.rgb;
+                specChart.data.datasets[3].data = frgb[0];
+                specChart.data.datasets[4].data = frgb[1];
+                specChart.data.datasets[5].data = frgb[2];
+                specChart.data.datasets[3].hidden = false;
+                specChart.data.datasets[4].hidden = false;
+                specChart.data.datasets[5].hidden = false;
+                specHint.textContent = `pred vs FDTD: 3x${C} (400-700 nm)`;
+              }
+            } catch(e) {
+              // no fdtd available
+            }
+          }
+          specChart.update();
+          if (specHint.textContent === 'click a thumbnail' || specHint.textContent === '') {
+            specHint.textContent = `forward model output: 3x${C} (400-700 nm)`;
+          }
+        } catch(e) {
+          specHint.textContent = 'spectrum unavailable (surrogate not configured)';
+        }
+      }
+
+      thumbs.addEventListener('click', async (ev) => {
+        const el = ev.target.closest('.thumb');
+        if (!el) return;
+        const step = el.getAttribute('data-step');
+        const idx = el.getAttribute('data-idx');
+        if (step == null || idx == null) return;
+        ui.selected.step = Number(step);
+        ui.selected.idx = Number(idx);
+        Array.from(thumbs.querySelectorAll('.thumb')).forEach(x => x.classList.toggle('sel', x === el));
+        await loadSpectrum(step, idx);
+      });
+
+      initSegmented(document.getElementById('scaleToggle'), 'scale', ['log','linear']);
+      initSegmented(document.getElementById('windowToggle'), 'window', ['all','200','50']);
+      initSegmented(document.getElementById('topkModeToggle'), 'topk_mode', ['best','cur']);
+      makeLossChart();
+      makeSpecChart();
+
+      // Invert view toggle (display-only).
+      const invertToggle = document.getElementById('invertToggle');
+      if (invertToggle) {
+        invertToggle.checked = (ui.invert_view === 'on');
+        invertToggle.addEventListener('change', () => {
+          ui.invert_view = invertToggle.checked ? 'on' : 'off';
+          localStorage.setItem('invert_view', ui.invert_view);
+          ui.lastTopkKey = ''; // force thumbs refresh
+        });
+      }
+
+      // FDTD verify toggle + run button
+      const fdtdToggle = document.getElementById('fdtdToggle');
+      if (fdtdToggle) {
+        fdtdToggle.checked = (ui.fdtd === 'on');
+        fdtdToggle.addEventListener('change', () => {
+          ui.fdtd = fdtdToggle.checked ? 'on' : 'off';
+          localStorage.setItem('fdtd_verify', ui.fdtd);
+          // refresh spectrum overlay if a thumb is selected
+          if (ui.selected.step != null) loadSpectrum(ui.selected.step, ui.selected.idx);
+        });
+      }
+      const runBtn = document.getElementById('runBtn');
+      if (runBtn) {
+        runBtn.addEventListener('click', async () => {
+          const nStart = Number(document.getElementById('inNStart')?.value || 200);
+          const nSteps = Number(document.getElementById('inNSteps')?.value || 2000);
+          const topk = Number(document.getElementById('inTopk')?.value || 50);
+          const rs = Number(document.getElementById('inRobust')?.value || 8);
+          const dev = String(document.getElementById('inDevice')?.value || 'cpu');
+          const chunk = Number(document.getElementById('inChunk')?.value || 64);
+          const fdtdEvery = Number(document.getElementById('inFdtdEvery')?.value || 10);
+          const wPurity = Number(document.getElementById('inWPurity')?.value || 1.0);
+          const wAbs = Number(document.getElementById('inWAbs')?.value || 0.0);
+          const wGray = Number(document.getElementById('inWGray')?.value || 0.1);
+          const wTV = Number(document.getElementById('inWTV')?.value || 0.01);
+          const wFill = Number(document.getElementById('inWFill')?.value || 1.0);
+          const fillMin = Number(document.getElementById('inFillMin')?.value || 0.2);
+          const fillMax = Number(document.getElementById('inFillMax')?.value || 0.5);
+
+          // persist
+          localStorage.setItem('loss_w_purity', String(wPurity));
+          localStorage.setItem('loss_w_abs', String(wAbs));
+          localStorage.setItem('loss_w_gray', String(wGray));
+          localStorage.setItem('loss_w_tv', String(wTV));
+          localStorage.setItem('loss_w_fill', String(wFill));
+          localStorage.setItem('loss_fill_min', String(fillMin));
+          localStorage.setItem('loss_fill_max', String(fillMax));
+          try{
+            const url = `/api/run/start?n_start=${encodeURIComponent(nStart)}&n_steps=${encodeURIComponent(nSteps)}&topk=${encodeURIComponent(topk)}&robustness_samples=${encodeURIComponent(rs)}&device=${encodeURIComponent(dev)}&chunk_size=${encodeURIComponent(chunk)}&fdtd_verify=${ui.fdtd==='on'?1:0}&fdtd_every=${encodeURIComponent(fdtdEvery)}&w_purity=${encodeURIComponent(wPurity)}&w_abs=${encodeURIComponent(wAbs)}&w_gray=${encodeURIComponent(wGray)}&w_tv=${encodeURIComponent(wTV)}&w_fill=${encodeURIComponent(wFill)}&fill_min=${encodeURIComponent(fillMin)}&fill_max=${encodeURIComponent(fillMax)}`;
+            const r = await fetch(url, {method:'POST'});
+            if (!r.ok) throw new Error(String(r.status));
+            setRunStatus('started');
+          } catch(e) {
+            setRunStatus('failed to start');
+          }
+        });
+      }
+      const stopBtn = document.getElementById('stopBtn');
+      if (stopBtn) {
+        stopBtn.addEventListener('click', async () => {
+          try{
+            const r = await fetch('/api/run/stop', {method:'POST'});
+            if (!r.ok) throw new Error(String(r.status));
+            const j = await r.json();
+            setRunStatus(j.stopped ? 'stopped' : (j.error || 'no run'));
+          } catch(e) {
+            setRunStatus('stop failed');
+          }
+        });
+      }
+      const resetBtn = document.getElementById('resetBtn');
+      if (resetBtn) {
+        resetBtn.addEventListener('click', async () => {
+          if (!confirm('Reset progress? This archives current data/progress into data/progress_archive.')) return;
+          try{
+            const r = await fetch('/api/run/reset', {method:'POST'});
+            if (!r.ok) throw new Error(String(r.status));
+            const j = await r.json();
+            ui.lastTopkKey = '';
+            thumbs.innerHTML = '';
+            topkHint.textContent = '';
+            setRunStatus('reset ok');
+          } catch(e) {
+            setRunStatus('reset failed');
+          }
+        });
+      }
+
+      function renderLatex(){
+        // Initial render uses defaults; once /api/status arrives, applyStatus() re-renders from meta.
+        renderLatexFromMeta(lastStatus ? (lastStatus.meta||{}) : {});
+      }
+      // KaTeX scripts are loaded with `defer`, so render on load (reference style).
+      window.addEventListener('load', () => {
+        renderLatex();
+        // If KaTeX is a little late (slow CDN), retry briefly.
+        let tries = 0;
+        const timer = setInterval(() => {
+          tries += 1;
+          if (window.renderMathInElement) renderLatex();
+          if (tries >= 10) clearInterval(timer);
+        }, 250);
+      });
+
+      tick();
+      setInterval(tick, 1200);
+
+      // Restore persisted weight inputs (dashboard-side defaults).
+      function restoreLossInputs(){
+        const set = (id, key, fallback) => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          const v = localStorage.getItem(key);
+          if (v != null && v !== '') el.value = v;
+          else el.value = String(fallback);
+        };
+        set('inWPurity', 'loss_w_purity', 1.0);
+        set('inWAbs', 'loss_w_abs', 0.0);
+        set('inWGray', 'loss_w_gray', 0.1);
+        set('inWTV', 'loss_w_tv', 0.01);
+        set('inWFill', 'loss_w_fill', 1.0);
+        set('inFillMin', 'loss_fill_min', 0.2);
+        set('inFillMax', 'loss_fill_max', 0.5);
+      }
+      restoreLossInputs();
+    </script>
+  </body>
 </html>

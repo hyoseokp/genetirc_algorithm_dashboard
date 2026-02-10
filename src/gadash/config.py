@@ -10,8 +10,9 @@ import yaml
 
 @dataclass(frozen=True)
 class PathsConfig:
-    checkpoint_path: str | None = None
-    cr_recon_root: str | None = None
+    forward_model_root: str | None = None
+    forward_checkpoint: str | None = None
+    forward_config_yaml: str | None = None
 
 
 @dataclass(frozen=True)
@@ -57,10 +58,14 @@ class SpectraConfig:
 
 @dataclass(frozen=True)
 class LossConfig:
-    spec_weight: float = 1.0
-    reg_weight: float = 0.02
+    # Match Inverse_design_CR dashboard knobs for minimal UI changes.
+    w_purity: float = 1.0
+    w_abs: float = 0.0
+    w_gray: float = 0.1
+    w_tv: float = 0.01
+    w_fill: float = 1.0
     fill_min: float = 0.2
-    fill_weight: float = 0.2
+    fill_max: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -116,8 +121,9 @@ def load_config(main_cfg_path: str | Path, paths_cfg_path: str | Path | None = N
 
     return AppConfig(
         paths=PathsConfig(
-            checkpoint_path=_expand_path(_deep_get(paths, "checkpoint_path", default=None)),
-            cr_recon_root=_expand_path(_deep_get(paths, "cr_recon_root", default=None)),
+            forward_model_root=_expand_path(_deep_get(paths, "forward_model_root", default=None)),
+            forward_checkpoint=_expand_path(_deep_get(paths, "forward_checkpoint", default=None)),
+            forward_config_yaml=_expand_path(_deep_get(paths, "forward_config_yaml", default=None)),
         ),
         ga=GAConfig(
             population=int(_deep_get(main, "ga", "population", default=128)),
@@ -149,10 +155,13 @@ def load_config(main_cfg_path: str | Path, paths_cfg_path: str | Path | None = N
             rgb_weights={k: float(v) for k, v in rgb_w.items()},
         ),
         loss=LossConfig(
-            spec_weight=float(_deep_get(main, "loss", "spec_weight", default=1.0)),
-            reg_weight=float(_deep_get(main, "loss", "reg_weight", default=0.02)),
+            w_purity=float(_deep_get(main, "loss", "w_purity", default=1.0)),
+            w_abs=float(_deep_get(main, "loss", "w_abs", default=0.0)),
+            w_gray=float(_deep_get(main, "loss", "w_gray", default=0.1)),
+            w_tv=float(_deep_get(main, "loss", "w_tv", default=0.01)),
+            w_fill=float(_deep_get(main, "loss", "w_fill", default=1.0)),
             fill_min=float(_deep_get(main, "loss", "fill_min", default=0.2)),
-            fill_weight=float(_deep_get(main, "loss", "fill_weight", default=0.2)),
+            fill_max=float(_deep_get(main, "loss", "fill_max", default=0.5)),
         ),
         io=IOConfig(
             topk=int(_deep_get(main, "io", "topk", default=8)),

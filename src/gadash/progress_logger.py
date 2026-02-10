@@ -11,7 +11,7 @@ import time
 @dataclass
 class MetricsLine:
     ts: str
-    gen: int
+    step: int
     loss_total: float
     loss_spec: float
     loss_reg: float
@@ -22,6 +22,7 @@ class ProgressLogger:
     def __init__(self, progress_dir: str | Path):
         self.progress_dir = Path(progress_dir)
         self.progress_dir.mkdir(parents=True, exist_ok=True)
+        (self.progress_dir / "previews").mkdir(parents=True, exist_ok=True)
         self.metrics_path = self.progress_dir / "metrics.jsonl"
 
     def write_meta(self, meta: dict[str, Any]) -> None:

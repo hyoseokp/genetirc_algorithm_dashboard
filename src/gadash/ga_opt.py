@@ -1,7 +1,5 @@
 ﻿from __future__ import annotations
 
-import json
-import math
 import random
 from dataclasses import asdict
 from pathlib import Path
@@ -14,8 +12,8 @@ from .config import AppConfig
 from .generator import build_generator
 from .losses import loss_from_pred
 from .progress_logger import ProgressLogger
-from .spectral import wavelengths_nm
-from .surrogate_interface import CRReconSurrogate, SurrogateError
+from .spectral import merge_rggb_to_rgb
+from .surrogate_interface import CRReconSurrogate, MockSurrogate
 
 
 def _torch_device(device: str) -> torch.device:
@@ -60,35 +58,42 @@ def run_ga(
     dev = _torch_device(device)
 
     # Surrogate
-    if not cfg.paths.checkpoint_path or not cfg.paths.cr_recon_root:
-        raise SurrogateError(
-            "missing paths config. Create configs/paths.yaml with checkpoint_path and cr_recon_root."
+    if dry_run:
+        surrogate = MockSurrogate(n_channels=int(cfg.spectra.channels))
+    else:
+        if (not cfg.paths.forward_model_root) or (not cfg.paths.forward_checkpoint) or (not cfg.paths.forward_config_yaml):
+            raise ValueError(
+                "missing paths config. Create configs/paths.yaml with "
+                "forward_model_root / forward_config_yaml / forward_checkpoint."
+            )
+        surrogate = CRReconSurrogate(
+            forward_model_root=Path(cfg.paths.forward_model_root),
+            checkpoint_path=Path(cfg.paths.forward_checkpoint),
+            config_yaml=Path(cfg.paths.forward_config_yaml),
+            device=dev,
         )
-
-    surrogate = CRReconSurrogate(
-        cr_recon_root=cfg.paths.cr_recon_root,
-        checkpoint_path=cfg.paths.checkpoint_path,
-        device=str(dev),
-    )
 
     gen = build_generator(cfg.design, cfg.generator)
 
     logger = ProgressLogger(progress_dir)
-    meta = {
-        "app": "gadash",
-        "device": str(dev),
-        "config": {
+    # Write meta in the same shape as Inverse_design_CR dashboard expects.
+    logger.write_meta(
+        {
+            "ts_start": logger.now_iso(),
+            "engine": "ga",
+            "n_start": int(cfg.ga.population),
+            "n_steps": int(cfg.ga.generations),
+            "topk": int(cfg.io.topk),
+            "robustness_samples": int(cfg.robustness.samples),
+            "seed_size": int(cfg.design.seed_size),
+            "struct_size": int(cfg.design.struct_size),
+            "device": str(dev),
             "ga": asdict(cfg.ga),
-            "design": asdict(cfg.design),
             "generator": asdict(cfg.generator),
-            "robustness": asdict(cfg.robustness),
-            "spectra": asdict(cfg.spectra),
+            "spectra": {"n_channels": int(cfg.spectra.channels), "rgb_weights": dict(cfg.spectra.rgb_weights or {})},
             "loss": asdict(cfg.loss),
-            "io": asdict(cfg.io),
-        },
-        "wavelengths_nm": wavelengths_nm(cfg.spectra.channels, cfg.spectra.wavelength_min_nm, cfg.spectra.wavelength_max_nm).tolist(),
-    }
-    logger.write_meta(meta)
+        }
+    )
 
     topk = int(cfg.io.topk)
     pop = _init_population(cfg, dev)
@@ -98,9 +103,9 @@ def run_ga(
         seed01 = _seed01_from_raw(a_raw)
         struct01 = gen(seed01)
 
-        # robustness: average over repeated forward runs (placeholder: same surrogate, no noise)
-        # hook: add dropout/noise in future
-        pred = surrogate.predict(struct01).pred_rgbc
+        # Surrogate: RGGB -> RGB
+        t = surrogate.predict(struct01[:, 0])
+        pred = merge_rggb_to_rgb(t)
         losses = loss_from_pred(pred, struct01, cfg.spectra, cfg.loss)
         return {
             "seed01": seed01,
@@ -136,40 +141,50 @@ def run_ga(
             best_loss = float(loss_sorted[0].item())
             best_so_far = pop_sorted[0:topk].detach().clone()
 
-        # pack + save best-so-far topk and current-gen topk
-        def _pack(a_raw_top: torch.Tensor, path: Path) -> None:
-            with torch.no_grad():
-                seed01 = _seed01_from_raw(a_raw_top)
-                struct01 = gen(seed01)
-                pred = surrogate.predict(struct01).pred_rgbc
+        # pack + save snapshots in the same format as Inverse_design_CR dashboard expects.
+        def _pack(seed01_top: torch.Tensor, struct01_top: torch.Tensor, metric_name: str, metric_vals: torch.Tensor, path: Path) -> None:
+            seed16 = seed01_top[:, 0].detach().cpu().numpy().astype(np.float32)  # (K,16,16)
+            struct_u8 = (struct01_top[:, 0].detach().cpu().numpy() >= 0.5).astype(np.uint8)  # (K,128,128)
             np.savez_compressed(
                 path,
-                a_raw=a_raw_top.detach().cpu().numpy(),
-                seed01=seed01.detach().cpu().numpy(),
-                struct01=struct01.detach().cpu().numpy(),
-                pred=pred.detach().cpu().numpy(),
+                seed16_topk=seed16,
+                struct128_topk=struct_u8,
+                **{f"metric_{metric_name}": metric_vals.detach().cpu().numpy().astype(np.float32)},
             )
 
         progress_dir_p = Path(progress_dir)
-        _pack(pop_sorted[:topk], progress_dir_p / f"topk_cur_step-{gidx}.npz")
+        # current-gen topk
+        seed01_cur = ev["seed01"][order[:topk]]
+        struct01_cur = ev["struct01"][order[:topk]]
+        _pack(seed01_cur, struct01_cur, "cur_loss", loss_sorted[:topk], progress_dir_p / f"topk_cur_step-{gidx}.npz")
+
+        # best-so-far topk
         if best_so_far is not None:
-            _pack(best_so_far[:topk], progress_dir_p / f"topk_step-{gidx}.npz")
+            with torch.no_grad():
+                seed01_best = _seed01_from_raw(best_so_far[:topk])
+                struct01_best = gen(seed01_best)
+            # best losses are tracked approximately via best_loss scalar; store per-item current estimate.
+            # For dashboard, metric is optional; keep a vector shaped (K,)
+            best_metric = torch.zeros((seed01_best.shape[0],), device=loss_sorted.device, dtype=loss_sorted.dtype)
+            best_metric[0] = float(best_loss)
+            _pack(seed01_best, struct01_best, "best_loss", best_metric, progress_dir_p / f"topk_step-{gidx}.npz")
 
         # metrics
         m = {
             "ts": logger.now_iso(),
-            "gen": int(gidx),
+            "step": int(gidx),
             "loss_total": float(loss_sorted.mean().item()),
-            "loss_best": float(loss_sorted[0].item()),
             "loss_spec": float(ev["loss_spec"].mean().item()),
             "loss_reg": float(ev["loss_reg"].mean().item()),
+            "loss_purity": float(ev["loss_purity"].mean().item()),
+            "loss_fill": float(ev["loss_fill"].mean().item()),
             "fill": float(ev["fill"].mean().item()),
         }
         logger.append_metrics(m)
 
         if cfg.io.print_every > 0 and (gidx % int(cfg.io.print_every) == 0 or gidx == gens - 1):
             print(
-                f"[GEN {gidx}/{gens-1}] loss_best={m['loss_best']:.4f} loss_mean={m['loss_total']:.4f} fill={m['fill']:.3f}"
+                f"[GEN {gidx}/{gens-1}] loss_mean={m['loss_total']:.4f} fill={m['fill']:.3f}"
             )
 
         if dry_run:

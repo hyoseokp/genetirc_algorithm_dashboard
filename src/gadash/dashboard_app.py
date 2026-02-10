@@ -376,7 +376,6 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         n_start: int = Query(default=200, ge=1),
         n_steps: int = Query(default=2000, ge=1),
         topk: int = Query(default=50, ge=1),
-        robustness_samples: int = Query(default=8, ge=1),
         device: str = Query(default="cpu"),
         chunk_size: int = Query(default=64, ge=1),
         fdtd_verify: int = Query(default=0, ge=0, le=1),
@@ -419,7 +418,6 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
             ga["population"] = int(n_start)
             ga["generations"] = int(n_steps)
             obj["ga"] = ga
-            obj["robustness"] = {"samples": int(robustness_samples)}
             io_cfg = obj.get("io") if isinstance(obj.get("io"), dict) else {}
             io_cfg["topk"] = int(topk)
             obj["io"] = io_cfg

@@ -41,7 +41,8 @@ def main() -> int:
 
     app = create_app(progress_dir=Path(args.progress_dir), surrogate=surrogate)
     print(f"[DASHBOARD] http://{args.host}:{int(args.port)}/")
-    uvicorn.run(app, host=str(args.host), port=int(args.port), log_level="info")
+    # Keep terminal quiet; dashboard polls endpoints periodically.
+    uvicorn.run(app, host=str(args.host), port=int(args.port), log_level="warning", access_log=False)
     return 0
 
 

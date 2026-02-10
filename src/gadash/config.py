@@ -44,11 +44,6 @@ class GeneratorConfig:
 
 
 @dataclass(frozen=True)
-class RobustnessConfig:
-    samples: int = 2
-
-
-@dataclass(frozen=True)
 class SpectraConfig:
     channels: int = 30
     wavelength_min_nm: float = 400.0
@@ -80,7 +75,6 @@ class AppConfig:
     ga: GAConfig = GAConfig()
     design: DesignConfig = DesignConfig()
     generator: GeneratorConfig = GeneratorConfig()
-    robustness: RobustnessConfig = RobustnessConfig()
     spectra: SpectraConfig = SpectraConfig(rgb_weights={"R": 1.0, "G": 2.0, "B": 1.0})
     loss: LossConfig = LossConfig()
     io: IOConfig = IOConfig()
@@ -147,7 +141,6 @@ def load_config(main_cfg_path: str | Path, paths_cfg_path: str | Path | None = N
             mfs_radius_px=int(_deep_get(main, "generator", "mfs_radius_px", default=8)),
             mfs_iters=int(_deep_get(main, "generator", "mfs_iters", default=2)),
         ),
-        robustness=RobustnessConfig(samples=int(_deep_get(main, "robustness", "samples", default=2))),
         spectra=SpectraConfig(
             channels=int(_deep_get(main, "spectra", "channels", default=30)),
             wavelength_min_nm=float(_deep_get(main, "spectra", "wavelength_min_nm", default=400.0)),

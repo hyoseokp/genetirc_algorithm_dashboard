@@ -84,7 +84,6 @@ def run_ga(
             "n_start": int(cfg.ga.population),
             "n_steps": int(cfg.ga.generations),
             "topk": int(cfg.io.topk),
-            "robustness_samples": int(cfg.robustness.samples),
             "seed_size": int(cfg.design.seed_size),
             "struct_size": int(cfg.design.struct_size),
             "device": str(dev),

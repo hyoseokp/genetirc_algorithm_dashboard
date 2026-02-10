@@ -22,9 +22,6 @@ generator:
   mfs_radius_px: 8
   mfs_iters: 2
 
-robustness:
-  samples: 2
-
 spectra:
   channels: 30
   wavelength_min_nm: 400.0

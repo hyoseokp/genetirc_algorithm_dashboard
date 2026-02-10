@@ -295,10 +295,6 @@
             <input id="inTopk" type="number" min="1" step="1" value="10" />
           </div>
           <div class="field">
-            <label for="inRobust">robustness_samples</label>
-            <input id="inRobust" type="number" min="1" step="1" value="2" />
-          </div>
-          <div class="field">
             <label for="inChunk">chunk_size</label>
             <input id="inChunk" type="number" min="1" step="1" value="64" />
           </div>
@@ -407,7 +403,7 @@
         <div class="card panel">
           <div class="row">
             <div class="kpi"><b>Loss Definition</b></div>
-            <div class="kpi">robust MC: E_{sigma,tau}[L] (Monte Carlo average)</div>
+            <div class="kpi">loss function used for GA fitness</div>
           </div>
           <div class="formulaBox">
             <div class="purityBox" id="purityBox" style="margin-bottom:10px">purity: (waiting for first snapshot)</div>
@@ -697,8 +693,8 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
 &\\textbf{Fill constraint:}\\\\
 &\\qquad f=\\mathrm{mean}(x),\\quad f\\in[${fill_min.toFixed(2)},\\ ${fill_max.toFixed(2)}].\\\\
 &\\qquad L_{\\mathrm{fill}}=\\mathrm{softplus}(f_{\\min}-f)^2+\\mathrm{softplus}(f-f_{\\max})^2.\\\\[8pt]
-&\\textbf{Total (robust MC):}\\\\
-&\\qquad L_{\\mathrm{total}}=\\mathbb{E}_{(\\sigma,\\tau)}\\Big[L_{\\mathrm{spec}}+L_{\\mathrm{reg}}+${w_fill.toFixed(3)}\\,L_{\\mathrm{fill}}\\Big].
+&\\textbf{Total:}\\\\
+&\\qquad L_{\\mathrm{total}}=L_{\\mathrm{spec}}+L_{\\mathrm{reg}}+${w_fill.toFixed(3)}\\,L_{\\mathrm{fill}}.
 \\end{aligned}`;
 
         const box = document.getElementById('lossFormula');
@@ -890,7 +886,6 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
           const nStart = Number(document.getElementById('inNStart')?.value || 200);
           const nSteps = Number(document.getElementById('inNSteps')?.value || 2000);
           const topk = Number(document.getElementById('inTopk')?.value || 50);
-          const rs = Number(document.getElementById('inRobust')?.value || 8);
           const dev = String(document.getElementById('inDevice')?.value || 'cpu');
           const chunk = Number(document.getElementById('inChunk')?.value || 64);
           const fdtdEvery = Number(document.getElementById('inFdtdEvery')?.value || 10);
@@ -911,7 +906,7 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
           localStorage.setItem('loss_fill_min', String(fillMin));
           localStorage.setItem('loss_fill_max', String(fillMax));
           try{
-            const url = `/api/run/start?n_start=${encodeURIComponent(nStart)}&n_steps=${encodeURIComponent(nSteps)}&topk=${encodeURIComponent(topk)}&robustness_samples=${encodeURIComponent(rs)}&device=${encodeURIComponent(dev)}&chunk_size=${encodeURIComponent(chunk)}&fdtd_verify=${ui.fdtd==='on'?1:0}&fdtd_every=${encodeURIComponent(fdtdEvery)}&w_purity=${encodeURIComponent(wPurity)}&w_abs=${encodeURIComponent(wAbs)}&w_gray=${encodeURIComponent(wGray)}&w_tv=${encodeURIComponent(wTV)}&w_fill=${encodeURIComponent(wFill)}&fill_min=${encodeURIComponent(fillMin)}&fill_max=${encodeURIComponent(fillMax)}`;
+            const url = `/api/run/start?n_start=${encodeURIComponent(nStart)}&n_steps=${encodeURIComponent(nSteps)}&topk=${encodeURIComponent(topk)}&device=${encodeURIComponent(dev)}&chunk_size=${encodeURIComponent(chunk)}&fdtd_verify=${ui.fdtd==='on'?1:0}&fdtd_every=${encodeURIComponent(fdtdEvery)}&w_purity=${encodeURIComponent(wPurity)}&w_abs=${encodeURIComponent(wAbs)}&w_gray=${encodeURIComponent(wGray)}&w_tv=${encodeURIComponent(wTV)}&w_fill=${encodeURIComponent(wFill)}&fill_min=${encodeURIComponent(fillMin)}&fill_max=${encodeURIComponent(fillMax)}`;
             const r = await fetch(url, {method:'POST'});
             if (!r.ok) throw new Error(String(r.status));
             setRunStatus('started');

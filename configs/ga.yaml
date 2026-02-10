@@ -1,0 +1,45 @@
+﻿# Default GA config
+
+ga:
+  population: 128
+  generations: 200
+  elite: 8
+  tournament_k: 5
+  crossover_alpha: 0.5
+  mutation_sigma: 0.15
+  mutation_p: 0.2
+  seed: 0
+
+design:
+  seed_size: 16
+  struct_size: 128
+  enforce_symmetry: true
+
+generator:
+  backend: rule_mfs
+  blur_sigma: 2.0
+  threshold: 0.45
+  mfs_radius_px: 8
+  mfs_iters: 2
+
+robustness:
+  samples: 2
+
+spectra:
+  channels: 30
+  wavelength_min_nm: 400.0
+  wavelength_max_nm: 700.0
+  rgb_weights:
+    R: 1.0
+    G: 2.0
+    B: 1.0
+
+loss:
+  spec_weight: 1.0
+  reg_weight: 0.02
+  fill_min: 0.2
+  fill_weight: 0.2
+
+io:
+  topk: 8
+  print_every: 10

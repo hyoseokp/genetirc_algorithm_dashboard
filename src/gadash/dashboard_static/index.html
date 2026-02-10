@@ -1,0 +1,238 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>GA Dashboard</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root{
+      --bg:#0b0f14; --panel:#101826; --panel2:#0f1622; --text:#e7eefb; --muted:#93a4be;
+      --accent:#58a6ff; --good:#2dd4bf; --bad:#fb7185; --grid:rgba(255,255,255,0.08);
+    }
+    body{margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; background:radial-gradient(1200px 600px at 30% 10%, #17233a, transparent), var(--bg); color:var(--text);}
+    header{display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid rgba(255,255,255,0.08);}
+    h1{font-size:16px; margin:0; letter-spacing:0.2px;}
+    .row{display:flex; gap:12px; padding:12px;}
+    .panel{background:linear-gradient(180deg, rgba(255,255,255,0.03), transparent), var(--panel); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:12px;}
+    .half{flex:1; min-width:0;}
+    .controls{display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
+    .btn{background:#18243a; color:var(--text); border:1px solid rgba(255,255,255,0.12); padding:8px 10px; border-radius:10px; cursor:pointer;}
+    .btn:hover{border-color:rgba(255,255,255,0.24);}
+    .toggle{display:flex; gap:8px; align-items:center; color:var(--muted); font-size:12px;}
+    select{background:#0c1422; color:var(--text); border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:6px 10px;}
+    .muted{color:var(--muted); font-size:12px;}
+    .grid{display:flex; gap:12px; padding:0 12px 12px 12px;}
+    .grid .left{flex:1.4; min-width:0;}
+    .grid .right{flex:1; min-width:0;}
+    .topk{display:grid; grid-template-columns:repeat(4, 1fr); gap:8px;}
+    .tile{background:var(--panel2); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:8px;}
+    .tile img{width:100%; image-rendering:pixelated; border-radius:8px; background:#000;}
+    .klabel{font-size:12px; color:var(--muted); margin:6px 0 0 0;}
+    .katexbox{overflow:auto; max-height:420px; line-height:1.5;}
+    .barwrap{height:8px; background:rgba(255,255,255,0.08); border-radius:999px; overflow:hidden;}
+    .bar{height:100%; width:0%; background:linear-gradient(90deg, var(--accent), var(--good));}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Genetic Algorithm Dashboard</h1>
+    <div class="controls">
+      <button class="btn" id="btnStart">Run</button>
+      <button class="btn" id="btnStop">Stop</button>
+      <button class="btn" id="btnReset">Reset</button>
+      <span class="toggle">Device
+        <select id="device"><option value="cuda">cuda</option><option value="cpu">cpu</option></select>
+      </span>
+      <span class="toggle">TopK
+        <select id="mode"><option value="best">best</option><option value="cur">current</option></select>
+      </span>
+      <span class="toggle"><input type="checkbox" id="invert" checked> invert view</span>
+      <span class="muted" id="status">idle</span>
+    </div>
+  </header>
+
+  <div class="row">
+    <div class="panel half">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <div>Optimization Progress</div>
+        <div class="muted" id="progText">-</div>
+      </div>
+      <div class="barwrap"><div class="bar" id="bar"></div></div>
+      <canvas id="lossChart" style="height:320px; margin-top:10px;"></canvas>
+    </div>
+    <div class="panel half">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <div>Spectrum (Top-1)</div>
+        <div class="muted" id="specText">-</div>
+      </div>
+      <canvas id="specChart" style="height:360px;"></canvas>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="panel left">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>Top-K Structures</div>
+        <div class="muted">auto-refresh</div>
+      </div>
+      <div class="topk" id="topk"></div>
+    </div>
+    <div class="panel right">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>Loss Definition</div>
+        <div class="muted">KaTeX</div>
+      </div>
+      <div class="katexbox" id="latex"></div>
+    </div>
+  </div>
+
+<script>
+const $ = (id)=>document.getElementById(id);
+let lossChart, specChart;
+
+function makeLossChart(){
+  const ctx = $("lossChart");
+  lossChart = new Chart(ctx, {
+    type:'line',
+    data:{labels:[], datasets:[
+      {label:'loss_best', data:[], borderColor:'#58a6ff', tension:0.25, pointRadius:0},
+      {label:'loss_mean', data:[], borderColor:'#2dd4bf', tension:0.25, pointRadius:0},
+    ]},
+    options:{responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:'#e7eefb'}}},
+      scales:{x:{ticks:{color:'#93a4be'}, grid:{color:'rgba(255,255,255,0.06)'}},
+              y:{ticks:{color:'#93a4be'}, grid:{color:'rgba(255,255,255,0.06)'}}}
+    }
+  });
+}
+
+function makeSpecChart(){
+  const ctx = $("specChart");
+  specChart = new Chart(ctx, {
+    type:'line',
+    data:{labels:[], datasets:[
+      {label:'R', data:[], borderColor:'#fb7185', tension:0.15, pointRadius:0},
+      {label:'G', data:[], borderColor:'#22c55e', tension:0.15, pointRadius:0},
+      {label:'B', data:[], borderColor:'#60a5fa', tension:0.15, pointRadius:0},
+    ]},
+    options:{responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:'#e7eefb'}}},
+      scales:{x:{ticks:{color:'#93a4be'}, grid:{color:'rgba(255,255,255,0.06)'}},
+              y:{min:0, max:1, ticks:{color:'#93a4be'}, grid:{color:'rgba(255,255,255,0.06)'}}}
+    }
+  });
+}
+
+async function api(path, opts={}){
+  const r = await fetch(path, opts);
+  if(!r.ok) throw new Error(await r.text());
+  return await r.json();
+}
+
+async function refreshLoss(){
+  const j = await api('/api/metrics');
+  const lines = j.lines || [];
+  const labels = lines.map(x=>x.gen);
+  const best = lines.map(x=>x.loss_best);
+  const mean = lines.map(x=>x.loss_total);
+  lossChart.data.labels = labels;
+  lossChart.data.datasets[0].data = best;
+  lossChart.data.datasets[1].data = mean;
+  lossChart.update('none');
+
+  if(lines.length){
+    const last = lines[lines.length-1];
+    $("progText").textContent = `gen ${last.gen}`;
+  }
+}
+
+async function refreshTopk(){
+  const mode = $("mode").value;
+  const invert = $("invert").checked ? 1 : 0;
+  const info = await api(`/api/topk/latest?mode=${mode}`);
+  if(!info.ok){
+    $("topk").innerHTML = '';
+    return;
+  }
+  const k = info.k;
+  const gen = info.gen;
+  const nodes = [];
+  for(let i=0;i<k;i++){
+    const url = `/api/topk/image?mode=${mode}&k=${i}&invert=${invert}&t=${Date.now()}`;
+    nodes.push(`
+      <div class="tile">
+        <img src="${url}"/>
+        <div class="klabel">k=${i} gen=${gen}</div>
+      </div>
+    `);
+  }
+  $("topk").innerHTML = nodes.join('');
+}
+
+async function refreshSpectrum(){
+  const mode = $("mode").value;
+  const j = await api(`/api/topk/spectrum?mode=${mode}&k=0`);
+  const pred = j.pred_rgbc;
+  if(!pred) return;
+
+  // x axis: 400..700 nm with 30 channels
+  const C = pred[0].length;
+  const wmin = 400.0, wmax = 700.0;
+  const xs = Array.from({length:C}, (_,i)=> (wmin + (wmax-wmin)*i/(C-1)).toFixed(1));
+  specChart.data.labels = xs;
+  specChart.data.datasets[0].data = pred[0];
+  specChart.data.datasets[1].data = pred[1];
+  specChart.data.datasets[2].data = pred[2];
+  specChart.update('none');
+}
+
+async function refreshStatus(){
+  const j = await api('/api/status');
+  $("status").textContent = j.running ? 'running' : 'idle';
+
+  // progress bar from latest gen id (coarse)
+  const c = await api('/api/config');
+  const total = (c.ga && c.ga.generations) ? c.ga.generations : 200;
+  const m = await api('/api/metrics');
+  const lines = m.lines || [];
+  const last = lines.length ? lines[lines.length-1] : null;
+  const frac = last ? Math.min(1.0, (last.gen+1)/Math.max(1,total)) : 0.0;
+  $("bar").style.width = `${(frac*100).toFixed(1)}%`;
+}
+
+async function loadLatex(){
+  const j = await api('/api/loss_definition');
+  const el = $("latex");
+  el.textContent = j.latex;
+  renderMathInElement(el, {delimiters:[{left:"$$", right:"$$", display:true},{left:"\\[", right:"\\]", display:true},{left:"\\(", right:"\\)", display:false}]});
+}
+
+$("btnStart").onclick = async ()=>{
+  const device = $("device").value;
+  await api(`/api/run/start?device=${device}`, {method:'POST'});
+  await refreshStatus();
+};
+$("btnStop").onclick = async ()=>{ await api('/api/run/stop', {method:'POST'}); await refreshStatus(); };
+$("btnReset").onclick = async ()=>{ await api('/api/run/reset', {method:'POST'}); await refreshLoss(); await refreshTopk(); await refreshSpectrum(); };
+
+makeLossChart();
+makeSpecChart();
+loadLatex();
+
+setInterval(async ()=>{
+  try{
+    await refreshStatus();
+    await refreshLoss();
+    await refreshTopk();
+    await refreshSpectrum();
+  }catch(e){
+    // ignore transient
+  }
+}, 1000);
+</script>
+</body>
+</html>

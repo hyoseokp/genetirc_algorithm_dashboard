@@ -1,0 +1,25 @@
+﻿# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Envs
+.venv/
+venv/
+
+# Python packaging
+*.egg-info/
+dist/
+build/
+
+# Local runs
+/data/
+/data/**
+!data/.gitkeep
+
+# Local path config
+configs/paths.yaml
+
+# OS
+.DS_Store
+Thumbs.db

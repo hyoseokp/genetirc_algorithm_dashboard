@@ -382,10 +382,10 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         chunk_size: int = Query(default=64, ge=1),
         fdtd_verify: int = Query(default=0, ge=0, le=1),
         fdtd_every: int = Query(default=10, ge=0, le=100000),
+        ga_mutation_p: float | None = Query(default=None),
+        ga_mutation_sigma: float | None = Query(default=None),
         w_purity: float | None = Query(default=None),
         w_abs: float | None = Query(default=None),
-        w_gray: float | None = Query(default=None),
-        w_tv: float | None = Query(default=None),
         w_fill: float | None = Query(default=None),
         fill_min: float | None = Query(default=None),
         fill_max: float | None = Query(default=None),
@@ -400,13 +400,12 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         overrides = {
             "w_purity": w_purity,
             "w_abs": w_abs,
-            "w_gray": w_gray,
-            "w_tv": w_tv,
             "w_fill": w_fill,
             "fill_min": fill_min,
             "fill_max": fill_max,
         }
-        if any(v is not None for v in overrides.values()):
+        ga_over = {"mutation_p": ga_mutation_p, "mutation_sigma": ga_mutation_sigma}
+        if any(v is not None for v in overrides.values()) or any(v is not None for v in ga_over.values()):
             obj = yaml.safe_load(base_cfg_path.read_text(encoding="utf-8")) or {}
             if not isinstance(obj, dict):
                 obj = {}
@@ -419,6 +418,10 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
             ga = obj.get("ga") if isinstance(obj.get("ga"), dict) else {}
             ga["population"] = int(n_start)
             ga["generations"] = int(n_steps)
+            for k, v in ga_over.items():
+                if v is None:
+                    continue
+                ga[k] = float(v)
             obj["ga"] = ga
             io_cfg = obj.get("io") if isinstance(obj.get("io"), dict) else {}
             io_cfg["topk"] = int(topk)

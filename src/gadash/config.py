@@ -56,8 +56,6 @@ class LossConfig:
     # Match Inverse_design_CR dashboard knobs for minimal UI changes.
     w_purity: float = 1.0
     w_abs: float = 0.0
-    w_gray: float = 0.1
-    w_tv: float = 0.01
     w_fill: float = 1.0
     fill_min: float = 0.2
     fill_max: float = 0.5
@@ -163,8 +161,6 @@ def load_config(main_cfg_path: str | Path, paths_cfg_path: str | Path | None = N
         loss=LossConfig(
             w_purity=float(_deep_get(main, "loss", "w_purity", default=1.0)),
             w_abs=float(_deep_get(main, "loss", "w_abs", default=0.0)),
-            w_gray=float(_deep_get(main, "loss", "w_gray", default=0.1)),
-            w_tv=float(_deep_get(main, "loss", "w_tv", default=0.01)),
             w_fill=float(_deep_get(main, "loss", "w_fill", default=1.0)),
             fill_min=float(_deep_get(main, "loss", "fill_min", default=0.2)),
             fill_max=float(_deep_get(main, "loss", "fill_max", default=0.5)),

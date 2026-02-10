@@ -324,14 +324,6 @@
               <input id="inWAbs" type="number" step="0.01" value="0.0" />
             </div>
             <div class="field">
-              <label for="inWGray">w_gray</label>
-              <input id="inWGray" type="number" step="0.01" value="0.1" />
-            </div>
-            <div class="field">
-              <label for="inWTV">w_tv</label>
-              <input id="inWTV" type="number" step="0.001" value="0.01" />
-            </div>
-            <div class="field">
               <label for="inWFill">w_fill</label>
               <input id="inWFill" type="number" step="0.1" value="1.0" />
             </div>
@@ -342,6 +334,14 @@
             <div class="field">
               <label for="inFillMax">fill_max</label>
               <input id="inFillMax" type="number" step="0.01" value="0.5" />
+            </div>
+            <div class="field">
+              <label for="inMutP">mutation_p</label>
+              <input id="inMutP" type="number" step="0.05" value="0.2" />
+            </div>
+            <div class="field">
+              <label for="inMutSig">mutation_sigma</label>
+              <input id="inMutSig" type="number" step="0.01" value="0.15" />
             </div>
           </div>
         </details>
@@ -670,8 +670,6 @@
         const W = (S && S.rgb_weights) ? S.rgb_weights : {};
         const w_purity = numOr(L.w_purity, 1.0);
         const w_abs = numOr(L.w_abs, 0.0);
-        const w_gray = numOr(L.w_gray, 0.1);
-        const w_tv = numOr(L.w_tv, 0.01);
         const w_fill = numOr(L.w_fill, 1.0);
         const fill_min = numOr(L.fill_min, 0.2);
         const fill_max = numOr(L.fill_max, 0.5);
@@ -692,14 +690,11 @@
 &\\qquad L_{\\mathrm{purity}}=\\lVert A-I\\rVert_F^2,\\qquad
 L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
 &\\qquad L_{\\mathrm{spec}}=${w_purity.toFixed(3)}\\,L_{\\mathrm{purity}}+${w_abs.toFixed(3)}\\,L_{\\mathrm{abs}}.\\\\[8pt]
-&\\textbf{Regularization:}\\\\
-&\\qquad L_{\\mathrm{gray}}=\\mathrm{mean}(u(1-u)),\\qquad L_{\\mathrm{tv}}=\\mathrm{TV}(u).\\\\
-&\\qquad L_{\\mathrm{reg}}=${w_gray.toFixed(3)}\\,L_{\\mathrm{gray}}+${w_tv.toFixed(3)}\\,L_{\\mathrm{tv}}.\\\\[8pt]
 &\\textbf{Fill constraint:}\\\\
 &\\qquad f=\\mathrm{mean}(x),\\quad f\\in[${fill_min.toFixed(2)},\\ ${fill_max.toFixed(2)}].\\\\
 &\\qquad L_{\\mathrm{fill}}=\\mathrm{softplus}(f_{\\min}-f)^2+\\mathrm{softplus}(f-f_{\\max})^2.\\\\[8pt]
 &\\textbf{Total:}\\\\
-&\\qquad L_{\\mathrm{total}}=L_{\\mathrm{spec}}+L_{\\mathrm{reg}}+${w_fill.toFixed(3)}\\,L_{\\mathrm{fill}}.
+&\\qquad L_{\\mathrm{total}}=L_{\\mathrm{spec}}+${w_fill.toFixed(3)}\\,L_{\\mathrm{fill}}.
 \\end{aligned}`;
 
         const box = document.getElementById('lossFormula');
@@ -905,23 +900,23 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
           const fdtdEvery = Number(document.getElementById('inFdtdEvery')?.value || 10);
           const wPurity = Number(document.getElementById('inWPurity')?.value || 1.0);
           const wAbs = Number(document.getElementById('inWAbs')?.value || 0.0);
-          const wGray = Number(document.getElementById('inWGray')?.value || 0.1);
-          const wTV = Number(document.getElementById('inWTV')?.value || 0.01);
           const wFill = Number(document.getElementById('inWFill')?.value || 1.0);
           const fillMin = Number(document.getElementById('inFillMin')?.value || 0.2);
           const fillMax = Number(document.getElementById('inFillMax')?.value || 0.5);
+          const mutP = Number(document.getElementById('inMutP')?.value || 0.2);
+          const mutSig = Number(document.getElementById('inMutSig')?.value || 0.15);
 
           // persist
           localStorage.setItem('loss_w_purity', String(wPurity));
           localStorage.setItem('loss_w_abs', String(wAbs));
-          localStorage.setItem('loss_w_gray', String(wGray));
-          localStorage.setItem('loss_w_tv', String(wTV));
           localStorage.setItem('loss_w_fill', String(wFill));
           localStorage.setItem('loss_fill_min', String(fillMin));
           localStorage.setItem('loss_fill_max', String(fillMax));
+          localStorage.setItem('ga_mut_p', String(mutP));
+          localStorage.setItem('ga_mut_sig', String(mutSig));
           try{
             const dryRun = (ui.dryrun === 'on') ? 1 : 0;
-            const url = `/api/run/start?n_start=${encodeURIComponent(nStart)}&n_steps=${encodeURIComponent(nSteps)}&topk=${encodeURIComponent(topk)}&dry_run=${encodeURIComponent(dryRun)}&device=${encodeURIComponent(dev)}&chunk_size=${encodeURIComponent(chunk)}&fdtd_verify=${ui.fdtd==='on'?1:0}&fdtd_every=${encodeURIComponent(fdtdEvery)}&w_purity=${encodeURIComponent(wPurity)}&w_abs=${encodeURIComponent(wAbs)}&w_gray=${encodeURIComponent(wGray)}&w_tv=${encodeURIComponent(wTV)}&w_fill=${encodeURIComponent(wFill)}&fill_min=${encodeURIComponent(fillMin)}&fill_max=${encodeURIComponent(fillMax)}`;
+            const url = `/api/run/start?n_start=${encodeURIComponent(nStart)}&n_steps=${encodeURIComponent(nSteps)}&topk=${encodeURIComponent(topk)}&dry_run=${encodeURIComponent(dryRun)}&device=${encodeURIComponent(dev)}&chunk_size=${encodeURIComponent(chunk)}&fdtd_verify=${ui.fdtd==='on'?1:0}&fdtd_every=${encodeURIComponent(fdtdEvery)}&ga_mutation_p=${encodeURIComponent(mutP)}&ga_mutation_sigma=${encodeURIComponent(mutSig)}&w_purity=${encodeURIComponent(wPurity)}&w_abs=${encodeURIComponent(wAbs)}&w_fill=${encodeURIComponent(wFill)}&fill_min=${encodeURIComponent(fillMin)}&fill_max=${encodeURIComponent(fillMax)}`;
             const r = await fetch(url, {method:'POST'});
             if (!r.ok) throw new Error(String(r.status));
             setRunStatus('started');
@@ -991,11 +986,11 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
         };
         set('inWPurity', 'loss_w_purity', 1.0);
         set('inWAbs', 'loss_w_abs', 0.0);
-        set('inWGray', 'loss_w_gray', 0.1);
-        set('inWTV', 'loss_w_tv', 0.01);
         set('inWFill', 'loss_w_fill', 1.0);
         set('inFillMin', 'loss_fill_min', 0.2);
         set('inFillMax', 'loss_fill_max', 0.5);
+        set('inMutP', 'ga_mut_p', 0.2);
+        set('inMutSig', 'ga_mut_sig', 0.15);
       }
       restoreLossInputs();
     </script>

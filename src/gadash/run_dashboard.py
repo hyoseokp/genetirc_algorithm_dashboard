@@ -9,6 +9,7 @@ import yaml
 from gadash.dashboard_app import create_app
 from gadash.surrogate_interface import CRReconSurrogate
 import torch
+from gadash.config import load_config
 
 
 def main() -> int:
@@ -24,10 +25,11 @@ def main() -> int:
     surrogate = None
     if args.surrogate != "none":
         try:
-            paths = yaml.safe_load(Path(args.paths).read_text(encoding="utf-8")) or {}
-            root = str(paths.get("forward_model_root", ""))
-            ckpt = str(paths.get("forward_checkpoint", ""))
-            cfg_yaml = str(paths.get("forward_config_yaml", ""))
+            # Use the same env-var expansion logic as the GA runner.
+            cfg = load_config("configs/ga.yaml", args.paths)
+            root = str(cfg.paths.forward_model_root or "")
+            ckpt = str(cfg.paths.forward_checkpoint or "")
+            cfg_yaml = str(cfg.paths.forward_config_yaml or "")
             if args.surrogate in ("auto", "crrecon"):
                 surrogate = CRReconSurrogate(
                     forward_model_root=Path(root),

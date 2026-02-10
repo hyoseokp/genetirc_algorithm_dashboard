@@ -380,6 +380,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         dry_run: int = Query(default=0, ge=0, le=1),
         device: str = Query(default="cpu"),
         chunk_size: int = Query(default=64, ge=1),
+        generator_backend: str | None = Query(default=None),
         fdtd_verify: int = Query(default=0, ge=0, le=1),
         fdtd_every: int = Query(default=10, ge=0, le=100000),
         ga_mutation_p: float | None = Query(default=None),
@@ -426,6 +427,12 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         io_cfg = obj.get("io") if isinstance(obj.get("io"), dict) else {}
         io_cfg["topk"] = int(topk)
         obj["io"] = io_cfg
+
+        # Optional generator backend override.
+        if generator_backend is not None:
+            gen_cfg = obj.get("generator") if isinstance(obj.get("generator"), dict) else {}
+            gen_cfg["backend"] = str(generator_backend)
+            obj["generator"] = gen_cfg
 
         # Optional loss overrides.
         loss = obj.get("loss") if isinstance(obj.get("loss"), dict) else {}

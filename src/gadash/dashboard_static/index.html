@@ -287,6 +287,13 @@
             </select>
           </div>
           <div class="field">
+            <label for="inGenBackend">generator</label>
+            <select id="inGenBackend">
+              <option value="rule_mfs" selected>rule_mfs (soft)</option>
+              <option value="rule_mfs_scipy">rule_mfs_scipy (exact)</option>
+            </select>
+          </div>
+          <div class="field">
             <label for="inNStart">n_start</label>
             <input id="inNStart" type="number" min="1" step="1" value="100" />
           </div>
@@ -912,6 +919,7 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
           const nSteps = Number(document.getElementById('inNSteps')?.value || 2000);
           const topk = Number(document.getElementById('inTopk')?.value || 50);
           const dev = String(document.getElementById('inDevice')?.value || 'cpu');
+          const genBackend = String(document.getElementById('inGenBackend')?.value || 'rule_mfs');
           const chunk = Number(document.getElementById('inChunk')?.value || 64);
           const fdtdEvery = Number(document.getElementById('inFdtdEvery')?.value || 10);
           const wPurity = Number(document.getElementById('inWPurity')?.value || 1.0);
@@ -941,7 +949,7 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
           try{
             const dryRun = (ui.dryrun === 'on') ? 1 : 0;
             const url = `/api/run/start?n_start=${encodeURIComponent(nStart)}&n_steps=${encodeURIComponent(nSteps)}&topk=${encodeURIComponent(topk)}&dry_run=${encodeURIComponent(dryRun)}&device=${encodeURIComponent(dev)}&chunk_size=${encodeURIComponent(chunk)}&fdtd_verify=${ui.fdtd==='on'?1:0}&fdtd_every=${encodeURIComponent(fdtdEvery)}&ga_mutation_p=${encodeURIComponent(mutP)}&ga_mutation_sigma=${encodeURIComponent(mutSig)}&w_purity=${encodeURIComponent(wPurity)}&w_abs=${encodeURIComponent(wAbs)}&w_fill=${encodeURIComponent(wFill)}&fill_min=${encodeURIComponent(fillMin)}&fill_max=${encodeURIComponent(fillMax)}`;
-            const url2 = url + `&ga_topk_clone_k=${encodeURIComponent(cloneK)}&ga_topk_clone_m=${encodeURIComponent(cloneM)}&ga_topk_clone_sigma_min=${encodeURIComponent(cloneSigMin)}&ga_topk_clone_sigma_max=${encodeURIComponent(cloneSigMax)}`;
+            const url2 = url + `&generator_backend=${encodeURIComponent(genBackend)}&ga_topk_clone_k=${encodeURIComponent(cloneK)}&ga_topk_clone_m=${encodeURIComponent(cloneM)}&ga_topk_clone_sigma_min=${encodeURIComponent(cloneSigMin)}&ga_topk_clone_sigma_max=${encodeURIComponent(cloneSigMax)}`;
             const r = await fetch(url2, {method:'POST'});
             if (!r.ok) throw new Error(String(r.status));
             setRunStatus('started');
@@ -1009,6 +1017,13 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
           if (v != null && v !== '') el.value = v;
           else el.value = String(fallback);
         };
+        // generator backend
+        const gb = localStorage.getItem('gen_backend');
+        const gbEl = document.getElementById('inGenBackend');
+        if (gbEl) {
+          gbEl.value = (gb === 'rule_mfs_scipy') ? 'rule_mfs_scipy' : 'rule_mfs';
+          gbEl.addEventListener('change', () => localStorage.setItem('gen_backend', gbEl.value));
+        }
         set('inWPurity', 'loss_w_purity', 1.0);
         set('inWAbs', 'loss_w_abs', 0.0);
         set('inWFill', 'loss_w_fill', 1.0);

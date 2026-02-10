@@ -28,7 +28,96 @@ class RuleMFSGenerator:
         return x.clamp(0.0, 1.0)
 
 
+class RuleMFSSciPyGenerator:
+    """Exact (non-differentiable) rule matching the SciPy EDT-based dataset generator.
+
+    CPU-only and slower, but useful when you want to match the original rule exactly.
+    """
+
+    def __init__(self, design: DesignConfig, gen: GeneratorConfig):
+        self.design = design
+        self.gen = gen
+
+        try:
+            from scipy.ndimage import distance_transform_edt, gaussian_filter, zoom  # type: ignore
+        except Exception as e:  # pragma: no cover
+            raise ImportError(
+                "generator.backend=rule_mfs_scipy requires SciPy (scipy.ndimage). "
+                "Install scipy or use generator.backend=rule_mfs."
+            ) from e
+
+        self._distance_transform_edt = distance_transform_edt
+        self._gaussian_filter = gaussian_filter
+        self._zoom = zoom
+
+    def _apply_buffer_logic(self, binary, min_size: float, buffer: float = 1.0):
+        import numpy as np
+
+        radius = float(min_size) * 0.5
+        dt = self._distance_transform_edt(binary)
+        core = dt >= radius
+        if not core.any():
+            return np.zeros_like(binary, dtype=bool)
+
+        dt_core = self._distance_transform_edt(~core)
+        over = dt_core <= (radius + buffer)
+        dt_over = self._distance_transform_edt(over)
+        return dt_over >= buffer
+
+    def _enforce_mfs_final(self, binary, min_size: float = 8.0, max_iter: int = 4):
+        import numpy as np
+
+        pad = int(float(min_size) * 2.0)
+        buffer_val = 1.0
+
+        img = binary.astype(bool)
+        img = np.pad(img, pad, mode="wrap")
+
+        for _ in range(int(max_iter)):
+            prev = img
+            img = self._apply_buffer_logic(img, min_size, buffer_val)  # solid
+            img = ~self._apply_buffer_logic(~img, min_size, buffer_val)  # void
+            if not np.any(img ^ prev):
+                break
+
+        img = img[pad:-pad, pad:-pad]
+        img = np.triu(img) | np.triu(img, 1).T
+        return img
+
+    def __call__(self, seed01: torch.Tensor) -> torch.Tensor:
+        """seed01: (B,1,16,16) in [0,1] -> struct01: (B,1,128,128) in {0,1} (float32)."""
+        import numpy as np
+
+        x = seed01
+        if self.design.enforce_symmetry:
+            x = enforce_diag_symmetry(x)
+
+        x_np = x.detach().float().cpu().numpy()  # (B,1,16,16)
+        B = int(x_np.shape[0])
+        H = int(self.design.struct_size)
+        out = np.zeros((B, 1, H, H), dtype=np.float32)
+        zf = float(self.design.struct_size) / float(self.design.seed_size)
+
+        # Note: we interpret gen.mfs_radius_px as "radius in px", while the reference code uses
+        # MIN_FEATURE_SIZE as a diameter-like size. Convert radius->min_size ~= 2*radius.
+        min_size = float(self.gen.mfs_radius_px) * 2.0
+
+        for i in range(B):
+            sym = x_np[i, 0]  # (16,16)
+            up = self._zoom(sym, zf, order=3)
+            blur = self._gaussian_filter(up, sigma=float(self.gen.blur_sigma))
+            binary = blur > float(self.gen.threshold)
+
+            # Match provided rule: invert after enforcing MFS.
+            binary = ~self._enforce_mfs_final(binary, min_size=min_size, max_iter=int(self.gen.mfs_iters))
+            out[i, 0] = binary.astype(np.float32)
+
+        return torch.from_numpy(out).to(device=seed01.device, dtype=torch.float32)
+
+
 def build_generator(design: DesignConfig, gen: GeneratorConfig):
-    if gen.backend != "rule_mfs":
-        raise ValueError(f"unsupported generator backend: {gen.backend}")
-    return RuleMFSGenerator(design, gen)
+    if gen.backend == "rule_mfs":
+        return RuleMFSGenerator(design, gen)
+    if gen.backend == "rule_mfs_scipy":
+        return RuleMFSSciPyGenerator(design, gen)
+    raise ValueError(f"unsupported generator backend: {gen.backend}")

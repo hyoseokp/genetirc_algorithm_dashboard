@@ -45,7 +45,9 @@ class DesignConfig:
 
 @dataclass(frozen=True)
 class GeneratorConfig:
-    backend: str = "rule_mfs"  # currently only rule_mfs
+    # rule_mfs: torch soft MFS (fast, GPU-friendly, differentiable-ish)
+    # rule_mfs_scipy: exact SciPy EDT-based rule (CPU, non-diff, slow but matches dataset rule)
+    backend: str = "rule_mfs"
     blur_sigma: float = 2.0
     threshold: float = 0.45
     mfs_radius_px: int = 8

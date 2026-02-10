@@ -26,7 +26,8 @@ def _init_population(cfg: AppConfig, device: torch.device) -> torch.Tensor:
     # population of raw logits -> seed01 via sigmoid
     B = cfg.ga.population
     S = cfg.design.seed_size
-    g = torch.Generator(device="cpu")
+    # Match generator device to tensor device (CUDA requires a CUDA generator).
+    g = torch.Generator(device=device.type)
     g.manual_seed(int(cfg.ga.seed))
     a = torch.randn((B, 1, S, S), generator=g, device=device, dtype=torch.float32)
     return a

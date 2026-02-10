@@ -51,19 +51,20 @@ def loss_definition_latex(spectra: SpectraConfig, loss_cfg: LossConfig) -> str:
     wG = (spectra.rgb_weights or {}).get("G", 2.0)
     wB = (spectra.rgb_weights or {}).get("B", 1.0)
 
-    return r"""
+    # Raw f-string lets us interpolate numeric weights while keeping LaTeX backslashes readable.
+    return rf"""
 \[
-\begin{aligned}
-&\textbf{Purity matrix (}A\in\mathbb{R}^{3\times 3}\textbf{):}\\
-&A_{i,j}= w_i\;\frac{1}{|\mathcal{B}_j|}\sum_{c\in\mathcal{B}_j} \hat{s}_{i,c},\quad
-i\in\{R,G,B\},\; j\in\{R,G,B\}\\[6pt]
-&\textbf{Bands (}C=30\textbf{): }\mathcal{B}_B=\{0..9\},\;\mathcal{B}_G=\{10..19\},\;\mathcal{B}_R=\{20..29\}\\[6pt]
-&\textbf{Weights: }(w_R,w_G,w_B)=(""" + str(wR) + r"," + str(wG) + r"," + str(wB) + r")\\[6pt]
-&\textbf{Spec loss: }\mathcal{L}_{\text{spec}}=\frac{1}{3}\sum_{i}(1-A_{i,i}) + \frac{1}{9}\sum_{i\neq j}|A_{i,j}|\\[6pt]
-&\textbf{Reg loss: }\mathcal{L}_{\text{reg}}=\|\nabla_x x\|_1+\|\nabla_y x\|_1\\[6pt]
-&\textbf{Fill penalty: }\mathcal{L}_{\text{fill}}=\max(0,\,f_{\min}-\mathrm{mean}(x))\\[10pt]
-&\textbf{Total: }\mathcal{L}=\lambda_{\text{spec}}\mathcal{L}_{\text{spec}}+\lambda_{\text{reg}}\mathcal{L}_{\text{reg}}+\lambda_{\text{fill}}\mathcal{L}_{\text{fill}}\\
-&\lambda_{\text{spec}}=""" + str(loss_cfg.spec_weight) + r",\;\lambda_{\text{reg}}=""" + str(loss_cfg.reg_weight) + r",\;\lambda_{\text{fill}}=""" + str(loss_cfg.fill_weight) + r",\; f_{\min}=""" + str(loss_cfg.fill_min) + r".
-\end{aligned}
+\begin{{aligned}}
+&\textbf{{Purity matrix (}}A\in\mathbb{{R}}^{{3\times 3}}\textbf{{):}}\\
+&A_{{i,j}}= w_i\;\frac{{1}}{{|\mathcal{{B}}_j|}}\sum_{{c\in\mathcal{{B}}_j}} \hat{{s}}_{{i,c}},\quad
+i\in\{{R,G,B\}},\; j\in\{{R,G,B\}}\\[6pt]
+&\textbf{{Bands (}}C=30\textbf{{): }}\mathcal{{B}}_B=\{{0..9\}},\;\mathcal{{B}}_G=\{{10..19\}},\;\mathcal{{B}}_R=\{{20..29\}}\\[6pt]
+&\textbf{{Weights: }}(w_R,w_G,w_B)=({wR},{wG},{wB})\\[6pt]
+&\textbf{{Spec loss: }}\mathcal{{L}}_{{\text{{spec}}}}=\frac{{1}}{{3}}\sum_i(1-A_{{i,i}}) + \frac{{1}}{{9}}\sum_{{i\neq j}}|A_{{i,j}}|\\[6pt]
+&\textbf{{Reg loss: }}\mathcal{{L}}_{{\text{{reg}}}}=\|\nabla_x x\|_1+\|\nabla_y x\|_1\\[6pt]
+&\textbf{{Fill penalty: }}\mathcal{{L}}_{{\text{{fill}}}}=\max(0,\,f_{{\min}}-\mathrm{{mean}}(x))\\[10pt]
+&\textbf{{Total: }}\mathcal{{L}}=\lambda_{{\text{{spec}}}}\mathcal{{L}}_{{\text{{spec}}}}+\lambda_{{\text{{reg}}}}\mathcal{{L}}_{{\text{{reg}}}}+\lambda_{{\text{{fill}}}}\mathcal{{L}}_{{\text{{fill}}}}\\
+&\lambda_{{\text{{spec}}}}={loss_cfg.spec_weight},\;\lambda_{{\text{{reg}}}}={loss_cfg.reg_weight},\;\lambda_{{\text{{fill}}}}={loss_cfg.fill_weight},\; f_{{\min}}={loss_cfg.fill_min}.
+\end{{aligned}}
 \]
 """

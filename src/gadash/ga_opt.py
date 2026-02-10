@@ -98,24 +98,50 @@ def run_ga(
     topk = int(cfg.io.topk)
     pop = _init_population(cfg, dev)
 
-    # helper: evaluate
-    def eval_pop(a_raw: torch.Tensor) -> dict[str, torch.Tensor]:
-        seed01 = _seed01_from_raw(a_raw)
-        struct01 = gen(seed01)
+    chunk = int(getattr(cfg.ga, "chunk_size", 0) or 0)
+    if chunk <= 0:
+        chunk = int(cfg.ga.population)
 
-        # Surrogate: RGGB -> RGB
-        t = surrogate.predict(struct01[:, 0])
-        pred = merge_rggb_to_rgb(t)
-        losses = loss_from_pred(pred, struct01, cfg.spectra, cfg.loss)
+    # helper: evaluate losses only (chunked to cap memory)
+    def eval_losses(a_raw: torch.Tensor) -> dict[str, torch.Tensor]:
+        B = a_raw.shape[0]
+        loss_total = torch.empty((B,), device=dev, dtype=torch.float32)
+        loss_spec = torch.empty_like(loss_total)
+        loss_reg = torch.empty_like(loss_total)
+        loss_purity = torch.empty_like(loss_total)
+        loss_fill = torch.empty_like(loss_total)
+        fill = torch.empty_like(loss_total)
+
+        for i0 in range(0, B, chunk):
+            i1 = min(B, i0 + chunk)
+            seed01 = _seed01_from_raw(a_raw[i0:i1])
+            struct01 = gen(seed01)
+            t = surrogate.predict(struct01[:, 0])
+            pred = merge_rggb_to_rgb(t)
+            losses = loss_from_pred(pred, struct01, cfg.spectra, cfg.loss)
+            loss_total[i0:i1] = losses["loss_total"].detach()
+            loss_spec[i0:i1] = losses["loss_spec"].detach()
+            loss_reg[i0:i1] = losses["loss_reg"].detach()
+            loss_purity[i0:i1] = losses["loss_purity"].detach()
+            loss_fill[i0:i1] = losses["loss_fill"].detach()
+            fill[i0:i1] = losses["fill"].detach()
+
         return {
-            "seed01": seed01,
-            "struct01": struct01,
-            "pred": pred,
-            **{k: v for k, v in losses.items() if k != "A"},
+            "loss_total": loss_total,
+            "loss_spec": loss_spec,
+            "loss_reg": loss_reg,
+            "loss_purity": loss_purity,
+            "loss_fill": loss_fill,
+            "fill": fill,
         }
 
-    best_so_far = None
-    best_loss = None
+    def _struct_for(a_raw_sel: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        seed01 = _seed01_from_raw(a_raw_sel)
+        struct01 = gen(seed01)
+        return seed01, struct01
+
+    best_araw = None
+    best_loss_vec = None
 
     gens = int(cfg.ga.generations)
     elite = int(cfg.ga.elite)
@@ -128,7 +154,7 @@ def run_ga(
         gens = 2
 
     for gidx in range(gens):
-        ev = eval_pop(pop)
+        ev = eval_losses(pop)
         loss_total = ev["loss_total"]
 
         # sort by fitness
@@ -136,10 +162,16 @@ def run_ga(
         pop_sorted = pop[order]
         loss_sorted = loss_total[order]
 
-        # track best
-        if best_loss is None or float(loss_sorted[0].item()) < float(best_loss):
-            best_loss = float(loss_sorted[0].item())
-            best_so_far = pop_sorted[0:topk].detach().clone()
+        # update best-so-far pool
+        if best_araw is None:
+            best_araw = pop_sorted[: min(topk, pop.shape[0])].detach().clone()
+            best_loss_vec = loss_sorted[: min(topk, pop.shape[0])].detach().clone()
+        else:
+            cand_araw = torch.cat([best_araw, pop], dim=0)
+            cand_loss = torch.cat([best_loss_vec, loss_total], dim=0)
+            o2 = torch.argsort(cand_loss)[: min(topk, cand_loss.numel())]
+            best_araw = cand_araw[o2].detach().clone()
+            best_loss_vec = cand_loss[o2].detach().clone()
 
         # pack + save snapshots in the same format as Inverse_design_CR dashboard expects.
         def _pack(seed01_top: torch.Tensor, struct01_top: torch.Tensor, metric_name: str, metric_vals: torch.Tensor, path: Path) -> None:
@@ -154,26 +186,20 @@ def run_ga(
 
         progress_dir_p = Path(progress_dir)
         # current-gen topk
-        seed01_cur = ev["seed01"][order[:topk]]
-        struct01_cur = ev["struct01"][order[:topk]]
+        a_cur = pop[order[:topk]]
+        seed01_cur, struct01_cur = _struct_for(a_cur)
         _pack(seed01_cur, struct01_cur, "cur_loss", loss_sorted[:topk], progress_dir_p / f"topk_cur_step-{gidx}.npz")
 
         # best-so-far topk
-        if best_so_far is not None:
-            with torch.no_grad():
-                seed01_best = _seed01_from_raw(best_so_far[:topk])
-                struct01_best = gen(seed01_best)
-            # best losses are tracked approximately via best_loss scalar; store per-item current estimate.
-            # For dashboard, metric is optional; keep a vector shaped (K,)
-            best_metric = torch.zeros((seed01_best.shape[0],), device=loss_sorted.device, dtype=loss_sorted.dtype)
-            best_metric[0] = float(best_loss)
-            _pack(seed01_best, struct01_best, "best_loss", best_metric, progress_dir_p / f"topk_step-{gidx}.npz")
+        assert best_araw is not None and best_loss_vec is not None
+        seed01_best, struct01_best = _struct_for(best_araw[:topk])
+        _pack(seed01_best, struct01_best, "best_loss", best_loss_vec[:topk], progress_dir_p / f"topk_step-{gidx}.npz")
 
         # metrics
         m = {
             "ts": logger.now_iso(),
             "step": int(gidx),
-            "loss_total": float(loss_sorted.mean().item()),
+            "loss_total": float(loss_total.mean().item()),
             "loss_spec": float(ev["loss_spec"].mean().item()),
             "loss_reg": float(ev["loss_reg"].mean().item()),
             "loss_purity": float(ev["loss_purity"].mean().item()),

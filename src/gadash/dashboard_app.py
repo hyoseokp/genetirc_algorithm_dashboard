@@ -394,40 +394,43 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         if rstate.proc is not None and rstate.proc.poll() is None:
             return JSONResponse({"ok": False, "error": "run already in progress"}, status_code=409)
 
-        # Allow per-run overrides from dashboard by writing a run-local config YAML.
+        # Always write a run-local config so dashboard inputs (n_start/n_steps/topk/ga knobs) apply.
         base_cfg_path = Path(__file__).resolve().parents[2] / "configs" / "ga.yaml"
-        cfg_path = base_cfg_path
-        overrides = {
-            "w_purity": w_purity,
-            "w_abs": w_abs,
-            "w_fill": w_fill,
-            "fill_min": fill_min,
-            "fill_max": fill_max,
-        }
-        ga_over = {"mutation_p": ga_mutation_p, "mutation_sigma": ga_mutation_sigma}
-        if any(v is not None for v in overrides.values()) or any(v is not None for v in ga_over.values()):
-            obj = yaml.safe_load(base_cfg_path.read_text(encoding="utf-8")) or {}
-            if not isinstance(obj, dict):
-                obj = {}
-            loss = obj.get("loss") if isinstance(obj.get("loss"), dict) else {}
-            for k, v in overrides.items():
-                if v is None:
-                    continue
-                loss[k] = float(v)
-            obj["loss"] = loss
-            ga = obj.get("ga") if isinstance(obj.get("ga"), dict) else {}
-            ga["population"] = int(n_start)
-            ga["generations"] = int(n_steps)
-            for k, v in ga_over.items():
-                if v is None:
-                    continue
-                ga[k] = float(v)
-            obj["ga"] = ga
-            io_cfg = obj.get("io") if isinstance(obj.get("io"), dict) else {}
-            io_cfg["topk"] = int(topk)
-            obj["io"] = io_cfg
-            cfg_path = Path(progress_dir) / "run_config.yaml"
-            cfg_path.write_text(yaml.safe_dump(obj, sort_keys=False), encoding="utf-8")
+        obj = yaml.safe_load(base_cfg_path.read_text(encoding="utf-8")) or {}
+        if not isinstance(obj, dict):
+            obj = {}
+
+        # Update GA/IO knobs from UI.
+        ga = obj.get("ga") if isinstance(obj.get("ga"), dict) else {}
+        ga["population"] = int(n_start)
+        ga["generations"] = int(n_steps)
+        ga["chunk_size"] = int(chunk_size)
+        if ga_mutation_p is not None:
+            ga["mutation_p"] = float(ga_mutation_p)
+        if ga_mutation_sigma is not None:
+            ga["mutation_sigma"] = float(ga_mutation_sigma)
+        obj["ga"] = ga
+
+        io_cfg = obj.get("io") if isinstance(obj.get("io"), dict) else {}
+        io_cfg["topk"] = int(topk)
+        obj["io"] = io_cfg
+
+        # Optional loss overrides.
+        loss = obj.get("loss") if isinstance(obj.get("loss"), dict) else {}
+        if w_purity is not None:
+            loss["w_purity"] = float(w_purity)
+        if w_abs is not None:
+            loss["w_abs"] = float(w_abs)
+        if w_fill is not None:
+            loss["w_fill"] = float(w_fill)
+        if fill_min is not None:
+            loss["fill_min"] = float(fill_min)
+        if fill_max is not None:
+            loss["fill_max"] = float(fill_max)
+        obj["loss"] = loss
+
+        cfg_path = Path(progress_dir) / "run_config.yaml"
+        cfg_path.write_text(yaml.safe_dump(obj, sort_keys=False), encoding="utf-8")
 
         cmd = [
             sys.executable,

@@ -257,6 +257,7 @@
         line-height: 1.65;
         color: #0f172a;
         white-space: pre;
+        font-variant-numeric: tabular-nums;
         overflow: auto;
         min-height: 240px;
       }
@@ -273,9 +274,10 @@
         align-items: center;
       }
       .purityCanvasWrap {
-        width: 100%;
+        width: min(320px, 100%);
         aspect-ratio: 1 / 1;
-        max-height: 320px;
+        justify-self: center;
+        align-self: center;
       }
       .purityCanvasWrap canvas {
         width: 100% !important;
@@ -542,6 +544,20 @@
       const purityHint = document.getElementById('purityHint');
       const purityTable = document.getElementById('purityTable');
       const purityCanvas = document.getElementById('purityCanvas');
+      let lastPurityA = null;
+
+      function resizePurityCanvas(){
+        if (!purityCanvas) return;
+        const wrap = purityCanvas.closest('.purityCanvasWrap');
+        const cssSize = Math.max(1, Math.floor((wrap ? wrap.clientWidth : 320) || 320));
+        const dpr = window.devicePixelRatio || 1;
+        const px = Math.floor(cssSize * dpr);
+        if (purityCanvas.width !== px || purityCanvas.height !== px) {
+          purityCanvas.width = px;
+          purityCanvas.height = px;
+          if (lastPurityA) drawPurityHeatmap(lastPurityA);
+        }
+      }
 
       function setStatus(ok, text){
         dot.classList.toggle('on', ok);
@@ -946,9 +962,12 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
 
       function drawPurityHeatmap(A){
         if (!purityCanvas) return;
+        lastPurityA = A;
+        resizePurityCanvas();
         const ctx = purityCanvas.getContext('2d');
         const W = purityCanvas.width, H = purityCanvas.height;
         ctx.clearRect(0,0,W,H);
+        ctx.imageSmoothingEnabled = false;
 
         const padL = 34, padT = 26, padR = 6, padB = 10;
         const gridW = W - padL - padR;
@@ -1013,19 +1032,14 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
         if (kpiPurity) kpiPurity.textContent = `(step ${step}, k=${idx})`;
         const A = p.A;
         const fmt = (x) => (Number.isFinite(Number(x)) ? Number(x).toFixed(4) : '----');
-        const lines = [];
-        lines.push('A (rows: pixel R,G,B ; cols: band B,G,R)');
-        lines.push('      B        G        R');
-        lines.push(`R  ${fmt(A[0][0])}  ${fmt(A[0][1])}  ${fmt(A[0][2])}`);
-        lines.push(`G  ${fmt(A[1][0])}  ${fmt(A[1][1])}  ${fmt(A[1][2])}`);
-        lines.push(`B  ${fmt(A[2][0])}  ${fmt(A[2][1])}  ${fmt(A[2][2])}`);
-        lines.push('');
-        lines.push(`diag (R,G,B) = ${p.diag.map(fmt).join(', ')}`);
-        lines.push(`offdiag_mean = ${fmt(p.offdiag_mean)}`);
-        lines.push('');
-        lines.push(`bands: B=[${p.bands[0].i0}..${p.bands[0].i1-1}]  G=[${p.bands[1].i0}..${p.bands[1].i1-1}]  R=[${p.bands[2].i0}..${p.bands[2].i1-1}]`);
-        lines.push(`rgb_weights: R=${p.w.R.toFixed(2)}  G=${p.w.G.toFixed(2)}  B=${p.w.B.toFixed(2)}`);
-        if (purityTable) purityTable.textContent = lines.join('\\n');
+        // Show only the 3x3 matrix (requested).
+        const lines = [
+          '      B        G        R',
+          `R  ${fmt(A[0][0])}  ${fmt(A[0][1])}  ${fmt(A[0][2])}`,
+          `G  ${fmt(A[1][0])}  ${fmt(A[1][1])}  ${fmt(A[1][2])}`,
+          `B  ${fmt(A[2][0])}  ${fmt(A[2][1])}  ${fmt(A[2][2])}`,
+        ];
+        if (purityTable) purityTable.textContent = lines.join('\n');
         if (purityHint) purityHint.textContent = 'heatmap fixed to [0,1], grayscale (black=1)';
         drawPurityHeatmap(A);
       }
@@ -1211,6 +1225,8 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
       // KaTeX scripts are loaded with `defer`, so render on load (reference style).
       window.addEventListener('load', () => {
         renderLatex();
+        resizePurityCanvas();
+        window.addEventListener('resize', () => resizePurityCanvas());
         // If KaTeX is a little late (slow CDN), retry briefly.
         let tries = 0;
         const timer = setInterval(() => {

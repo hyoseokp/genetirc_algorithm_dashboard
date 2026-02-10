@@ -343,6 +343,22 @@
               <label for="inMutSig">mutation_sigma</label>
               <input id="inMutSig" type="number" step="0.01" value="0.15" />
             </div>
+            <div class="field">
+              <label for="inCloneK">topk_clone_k</label>
+              <input id="inCloneK" type="number" min="0" step="1" value="8" />
+            </div>
+            <div class="field">
+              <label for="inCloneM">topk_clone_m</label>
+              <input id="inCloneM" type="number" min="0" step="1" value="0" />
+            </div>
+            <div class="field">
+              <label for="inCloneSigMin">clone_sigma_min</label>
+              <input id="inCloneSigMin" type="number" min="0" step="0.01" value="0.02" />
+            </div>
+            <div class="field">
+              <label for="inCloneSigMax">clone_sigma_max</label>
+              <input id="inCloneSigMax" type="number" min="0" step="0.01" value="0.08" />
+            </div>
           </div>
         </details>
       </div>
@@ -905,6 +921,10 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
           const fillMax = Number(document.getElementById('inFillMax')?.value || 0.5);
           const mutP = Number(document.getElementById('inMutP')?.value || 0.2);
           const mutSig = Number(document.getElementById('inMutSig')?.value || 0.15);
+          const cloneK = Number(document.getElementById('inCloneK')?.value || 0);
+          const cloneM = Number(document.getElementById('inCloneM')?.value || 0);
+          const cloneSigMin = Number(document.getElementById('inCloneSigMin')?.value || 0.02);
+          const cloneSigMax = Number(document.getElementById('inCloneSigMax')?.value || 0.08);
 
           // persist
           localStorage.setItem('loss_w_purity', String(wPurity));
@@ -914,10 +934,15 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
           localStorage.setItem('loss_fill_max', String(fillMax));
           localStorage.setItem('ga_mut_p', String(mutP));
           localStorage.setItem('ga_mut_sig', String(mutSig));
+          localStorage.setItem('ga_clone_k', String(cloneK));
+          localStorage.setItem('ga_clone_m', String(cloneM));
+          localStorage.setItem('ga_clone_sig_min', String(cloneSigMin));
+          localStorage.setItem('ga_clone_sig_max', String(cloneSigMax));
           try{
             const dryRun = (ui.dryrun === 'on') ? 1 : 0;
             const url = `/api/run/start?n_start=${encodeURIComponent(nStart)}&n_steps=${encodeURIComponent(nSteps)}&topk=${encodeURIComponent(topk)}&dry_run=${encodeURIComponent(dryRun)}&device=${encodeURIComponent(dev)}&chunk_size=${encodeURIComponent(chunk)}&fdtd_verify=${ui.fdtd==='on'?1:0}&fdtd_every=${encodeURIComponent(fdtdEvery)}&ga_mutation_p=${encodeURIComponent(mutP)}&ga_mutation_sigma=${encodeURIComponent(mutSig)}&w_purity=${encodeURIComponent(wPurity)}&w_abs=${encodeURIComponent(wAbs)}&w_fill=${encodeURIComponent(wFill)}&fill_min=${encodeURIComponent(fillMin)}&fill_max=${encodeURIComponent(fillMax)}`;
-            const r = await fetch(url, {method:'POST'});
+            const url2 = url + `&ga_topk_clone_k=${encodeURIComponent(cloneK)}&ga_topk_clone_m=${encodeURIComponent(cloneM)}&ga_topk_clone_sigma_min=${encodeURIComponent(cloneSigMin)}&ga_topk_clone_sigma_max=${encodeURIComponent(cloneSigMax)}`;
+            const r = await fetch(url2, {method:'POST'});
             if (!r.ok) throw new Error(String(r.status));
             setRunStatus('started');
           } catch(e) {
@@ -991,6 +1016,10 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
         set('inFillMax', 'loss_fill_max', 0.5);
         set('inMutP', 'ga_mut_p', 0.2);
         set('inMutSig', 'ga_mut_sig', 0.15);
+        set('inCloneK', 'ga_clone_k', 8);
+        set('inCloneM', 'ga_clone_m', 0);
+        set('inCloneSigMin', 'ga_clone_sig_min', 0.02);
+        set('inCloneSigMax', 'ga_clone_sig_max', 0.08);
       }
       restoreLossInputs();
     </script>

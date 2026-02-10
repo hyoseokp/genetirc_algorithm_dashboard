@@ -3,11 +3,17 @@
 ga:
   population: 128
   generations: 200
-  elite: 8
+  elite: 8  # legacy (not used for next-gen; we keep io.topk as the preserved set)
   tournament_k: 5
   crossover_alpha: 0.5
   mutation_sigma: 0.15
   mutation_p: 0.2
+  # Elite cloning: next generation = topk_keep + topk_clone_k * topk_clone_m + children
+  # Set topk_clone_m=0 to disable cloning.
+  topk_clone_k: 8
+  topk_clone_m: 0
+  topk_clone_sigma_min: 0.02
+  topk_clone_sigma_max: 0.08
   chunk_size: 64
   seed: 0
 

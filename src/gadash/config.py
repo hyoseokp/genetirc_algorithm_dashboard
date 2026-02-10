@@ -24,6 +24,14 @@ class GAConfig:
     crossover_alpha: float = 0.5
     mutation_sigma: float = 0.15
     mutation_p: float = 0.2
+    # Top-k cloning into next generation:
+    # N = topk_keep + topk_clone_k * topk_clone_m + N_child
+    # Clones are made in raw-logit space via additive Gaussian noise with sigma scheduled
+    # from topk_clone_sigma_min to topk_clone_sigma_max across the M clone groups.
+    topk_clone_k: int = 8
+    topk_clone_m: int = 0
+    topk_clone_sigma_min: float = 0.02
+    topk_clone_sigma_max: float = 0.08
     chunk_size: int = 64
     seed: int = 0
 
@@ -139,6 +147,10 @@ def load_config(main_cfg_path: str | Path, paths_cfg_path: str | Path | None = N
             crossover_alpha=float(_deep_get(main, "ga", "crossover_alpha", default=0.5)),
             mutation_sigma=float(_deep_get(main, "ga", "mutation_sigma", default=0.15)),
             mutation_p=float(_deep_get(main, "ga", "mutation_p", default=0.2)),
+            topk_clone_k=int(_deep_get(main, "ga", "topk_clone_k", default=8)),
+            topk_clone_m=int(_deep_get(main, "ga", "topk_clone_m", default=0)),
+            topk_clone_sigma_min=float(_deep_get(main, "ga", "topk_clone_sigma_min", default=0.02)),
+            topk_clone_sigma_max=float(_deep_get(main, "ga", "topk_clone_sigma_max", default=0.08)),
             chunk_size=int(_deep_get(main, "ga", "chunk_size", default=64)),
             seed=int(_deep_get(main, "ga", "seed", default=0)),
         ),

@@ -384,6 +384,10 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         fdtd_every: int = Query(default=10, ge=0, le=100000),
         ga_mutation_p: float | None = Query(default=None),
         ga_mutation_sigma: float | None = Query(default=None),
+        ga_topk_clone_k: int | None = Query(default=None, ge=0),
+        ga_topk_clone_m: int | None = Query(default=None, ge=0),
+        ga_topk_clone_sigma_min: float | None = Query(default=None, ge=0.0),
+        ga_topk_clone_sigma_max: float | None = Query(default=None, ge=0.0),
         w_purity: float | None = Query(default=None),
         w_abs: float | None = Query(default=None),
         w_fill: float | None = Query(default=None),
@@ -409,6 +413,14 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
             ga["mutation_p"] = float(ga_mutation_p)
         if ga_mutation_sigma is not None:
             ga["mutation_sigma"] = float(ga_mutation_sigma)
+        if ga_topk_clone_k is not None:
+            ga["topk_clone_k"] = int(ga_topk_clone_k)
+        if ga_topk_clone_m is not None:
+            ga["topk_clone_m"] = int(ga_topk_clone_m)
+        if ga_topk_clone_sigma_min is not None:
+            ga["topk_clone_sigma_min"] = float(ga_topk_clone_sigma_min)
+        if ga_topk_clone_sigma_max is not None:
+            ga["topk_clone_sigma_max"] = float(ga_topk_clone_sigma_max)
         obj["ga"] = ga
 
         io_cfg = obj.get("io") if isinstance(obj.get("io"), dict) else {}

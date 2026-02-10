@@ -1,6 +1,5 @@
 ﻿from __future__ import annotations
 
-import random
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -43,6 +42,20 @@ def _tournament_select(losses: torch.Tensor, k: int) -> int:
     idx = torch.randint(0, n, (k,), device=losses.device)
     best = idx[losses[idx].argmin()]
     return int(best.item())
+
+def _tournament_select_batch(losses: torch.Tensor, k: int, n_select: int) -> torch.Tensor:
+    """Vectorized tournament selection. Returns indices (n_select,) on losses.device."""
+    n = int(losses.numel())
+    if n <= 0:
+        raise ValueError("empty population")
+    k = max(1, int(k))
+    n_select = max(0, int(n_select))
+    if n_select == 0:
+        return torch.empty((0,), device=losses.device, dtype=torch.long)
+    idx = torch.randint(0, n, (n_select, k), device=losses.device)
+    best_in_tourn = losses[idx].argmin(dim=1, keepdim=True)
+    sel = idx.gather(1, best_in_tourn).squeeze(1)
+    return sel.to(torch.long)
 
 
 def _make_child(p1: torch.Tensor, p2: torch.Tensor, alpha: float) -> torch.Tensor:
@@ -144,14 +157,13 @@ def run_ga(
     best_loss_vec = None
 
     gens = int(cfg.ga.generations)
-    elite = int(cfg.ga.elite)
     t_k = int(cfg.ga.tournament_k)
     alpha = float(cfg.ga.crossover_alpha)
     mut_sigma = float(cfg.ga.mutation_sigma)
     mut_p = float(cfg.ga.mutation_p)
 
     if dry_run:
-        gens = 2
+        gens = 2  # still evolve; dry-run only swaps surrogate to MockSurrogate
 
     for gidx in range(gens):
         ev = eval_losses(pop)
@@ -213,29 +225,59 @@ def run_ga(
                 f"[GEN {gidx}/{gens-1}] loss_mean={m['loss_total']:.4f} fill={m['fill']:.3f}"
             )
 
-        if dry_run:
-            continue
-
         # build next generation
-        next_pop = []
-
-        # elites
-        next_pop.append(pop_sorted[:elite])
-
-        # rest by tournament + crossover + mutation
         N = int(cfg.ga.population)
-        while sum(x.shape[0] for x in next_pop) < N:
-            i1 = _tournament_select(loss_total, t_k)
-            i2 = _tournament_select(loss_total, t_k)
-            p1 = pop[i1 : i1 + 1]
-            p2 = pop[i2 : i2 + 1]
+        keep_k = min(int(cfg.io.topk), N)
+        keep = pop_sorted[:keep_k]
+
+        # Elite cloning (micro Gaussian noise in raw-logit space).
+        clone_k = int(getattr(cfg.ga, "topk_clone_k", 0) or 0)
+        clone_m = int(getattr(cfg.ga, "topk_clone_m", 0) or 0)
+        clone_k = max(0, min(clone_k, keep_k))
+        clone_m = max(0, clone_m)
+        sig_min = float(getattr(cfg.ga, "topk_clone_sigma_min", 0.02) or 0.02)
+        sig_max = float(getattr(cfg.ga, "topk_clone_sigma_max", 0.08) or 0.08)
+        if sig_max < sig_min:
+            sig_min, sig_max = sig_max, sig_min
+
+        clones_list: list[torch.Tensor] = []
+        cap_after_keep = max(0, N - keep.shape[0])
+        total_clone_target = clone_k * clone_m
+        total_clone = min(total_clone_target, cap_after_keep)
+        if clone_k > 0 and clone_m > 0 and total_clone > 0:
+            src = pop_sorted[:clone_k]
+            if clone_m == 1:
+                sigmas = [sig_min]
+            else:
+                sigmas = [sig_min + (sig_max - sig_min) * (j / (clone_m - 1)) for j in range(clone_m)]
+
+            remaining = total_clone
+            for sigma in sigmas:
+                if remaining <= 0:
+                    break
+                c = src + float(sigma) * torch.randn_like(src)
+                if c.shape[0] > remaining:
+                    c = c[:remaining]
+                clones_list.append(c)
+                remaining -= int(c.shape[0])
+
+        clones = torch.cat(clones_list, dim=0) if clones_list else torch.empty((0,) + keep.shape[1:], device=dev)
+
+        # Children: tournament + blend crossover + mutation.
+        n_child = max(0, N - int(keep.shape[0]) - int(clones.shape[0]))
+        if n_child > 0:
+            sel1 = _tournament_select_batch(loss_total, t_k, n_child)
+            sel2 = _tournament_select_batch(loss_total, t_k, n_child)
+            p1 = pop[sel1]
+            p2 = pop[sel2]
             child = _make_child(p1, p2, alpha)
+            if mut_p > 0.0 and mut_sigma > 0.0:
+                msk = (torch.rand((n_child,), device=dev) < float(mut_p))
+                if bool(msk.any()):
+                    child[msk] = child[msk] + float(mut_sigma) * torch.randn_like(child[msk])
+        else:
+            child = torch.empty((0,) + keep.shape[1:], device=dev)
 
-            if random.random() < mut_p:
-                child = child + mut_sigma * torch.randn_like(child)
-
-            next_pop.append(child)
-
-        pop = torch.cat(next_pop, dim=0)[:N]
+        pop = torch.cat([keep, clones, child], dim=0)[:N]
 
     return {"progress_dir": str(progress_dir), "gens": gens}

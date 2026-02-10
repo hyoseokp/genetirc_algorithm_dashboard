@@ -102,15 +102,34 @@ class RuleMFSSciPyGenerator:
         # MIN_FEATURE_SIZE as a diameter-like size. Convert radius->min_size ~= 2*radius.
         min_size = float(self.gen.mfs_radius_px) * 2.0
 
-        for i in range(B):
+        def _one(i: int):
             sym = x_np[i, 0]  # (16,16)
             up = self._zoom(sym, zf, order=3)
             blur = self._gaussian_filter(up, sigma=float(self.gen.blur_sigma))
             binary = blur > float(self.gen.threshold)
-
-            # Match provided rule: invert after enforcing MFS.
             binary = ~self._enforce_mfs_final(binary, min_size=min_size, max_iter=int(self.gen.mfs_iters))
-            out[i, 0] = binary.astype(np.float32)
+            return i, binary.astype(np.float32)
+
+        # The EDT kernels are in C and typically release the GIL; threads can speed up on multi-core CPUs.
+        try:
+            import os
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            max_workers = min(8, int(os.cpu_count() or 1))
+            if B >= 4 and max_workers >= 2:
+                with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                    futs = [ex.submit(_one, i) for i in range(B)]
+                    for f in as_completed(futs):
+                        i, bi = f.result()
+                        out[i, 0] = bi
+            else:
+                for i in range(B):
+                    _, bi = _one(i)
+                    out[i, 0] = bi
+        except Exception:
+            for i in range(B):
+                _, bi = _one(i)
+                out[i, 0] = bi
 
         return torch.from_numpy(out).to(device=seed01.device, dtype=torch.float32)
 

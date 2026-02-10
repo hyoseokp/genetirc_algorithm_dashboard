@@ -237,6 +237,73 @@
         line-height: 1.6;
       }
       .purityMono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace; font-size: 11px; color: #334155; }
+      .purityPanel {
+        margin-top: 10px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        align-items: start;
+      }
+      @media (max-width: 960px) {
+        .purityPanel { grid-template-columns: 1fr; }
+      }
+      .purityTable {
+        background: #f8fafc;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace;
+        font-size: 12px;
+        line-height: 1.65;
+        color: #0f172a;
+        white-space: pre;
+        overflow: auto;
+        min-height: 240px;
+      }
+      .purityViz {
+        background: #f8fafc;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+      }
+      .purityVizRow {
+        display: grid;
+        grid-template-columns: 1fr 22px;
+        gap: 10px;
+        align-items: center;
+      }
+      .purityCanvasWrap {
+        width: 100%;
+        aspect-ratio: 1 / 1;
+        max-height: 320px;
+      }
+      .purityCanvasWrap canvas {
+        width: 100% !important;
+        height: 100% !important;
+        display: block;
+        border-radius: 8px;
+        background: white;
+      }
+      .cbar {
+        width: 22px;
+        height: 100%;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, #ffffff, #000000);
+      }
+      .cbarLabel {
+        font-size: 10px;
+        color: #64748b;
+        text-align: center;
+        margin-top: 6px;
+      }
+      .cbarTicks {
+        display: flex;
+        justify-content: space-between;
+        font-size: 10px;
+        color: #64748b;
+        margin-top: 6px;
+      }
       .formulaBox {
         margin-top: 10px;
         background: #f8fafc;
@@ -433,9 +500,29 @@
             <div class="kpi">loss function used for GA fitness</div>
           </div>
           <div class="formulaBox">
-            <div class="purityBox" id="purityBox" style="margin-bottom:10px">purity: (waiting for first snapshot)</div>
             <div class="formulaLatex" id="lossFormula"></div>
             <pre id="lossFormulaTex" style="display:none"></pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom: Purity matrix (numeric + heatmap) -->
+      <div class="card panel">
+        <div class="row">
+          <div class="kpi"><b>Purity Matrix</b> <span id="kpiPurity">-</span></div>
+          <div class="kpi" id="purityHint">computed from the currently selected spectrum</div>
+        </div>
+        <div class="purityPanel">
+          <div class="purityTable" id="purityTable">waiting for first spectrum...</div>
+          <div class="purityViz">
+            <div class="purityVizRow">
+              <div class="purityCanvasWrap"><canvas id="purityCanvas" width="320" height="320"></canvas></div>
+              <div>
+                <div class="cbar" title="color scale fixed to [0,1]"></div>
+                <div class="cbarTicks"><span>1</span><span>0</span></div>
+                <div class="cbarLabel">value</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -451,6 +538,10 @@
       const topkHint = document.getElementById('topkHint');
       const kpiSpec = document.getElementById('kpiSpec');
       const specHint = document.getElementById('specHint');
+      const kpiPurity = document.getElementById('kpiPurity');
+      const purityHint = document.getElementById('purityHint');
+      const purityTable = document.getElementById('purityTable');
+      const purityCanvas = document.getElementById('purityCanvas');
 
       function setStatus(ok, text){
         dot.classList.toggle('on', ok);
@@ -702,13 +793,7 @@
 
         // Keep the original KaTeX auto-render approach: inject $$...$$ and call renderMathInElement.
         const texBody = `\\begin{aligned}
-&\\textbf{RGB weighting (before }A\\textbf{):}\\\\
-&\\qquad \\tilde{s}_{R,k}=${wR.toFixed(2)}\\,s_{R,k},\\quad
-\\tilde{s}_{G,k}=${wG.toFixed(2)}\\,s_{G,k},\\quad
-\\tilde{s}_{B,k}=${wB.toFixed(2)}\\,s_{B,k}.\\\\[6pt]
-&\\textbf{Purity matrix (30ch bins):}\\\\
-&\\qquad I_B=\\{0,\\dots,9\\},\\ I_G=\\{10,\\dots,19\\},\\ I_R=\\{20,\\dots,29\\}.\\\\
-&\\qquad A_{c,b}=\\frac{1}{|I_b|}\\sum_{k\\in I_b} \\tilde{s}_{c,k},\\qquad A\\in\\mathbb{R}^{3\\times 3}.\\\\[8pt]
+&\\textbf{(Purity matrix }A\\textbf{ is shown in the Purity panel below.)}\\\\[6pt]
 &\\textbf{Spectral loss:}\\\\
 &\\qquad L_{\\mathrm{purity}}=\\lVert A-I\\rVert_F^2,\\qquad
 L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
@@ -797,26 +882,152 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
           }
         } catch(e) { /* ignore */ }
 
-        // Purity debug
-        try{
-          const p = await fetchJSON('/api/purity/latest');
-          const el = document.getElementById('purityBox');
-          if (el && p && p.step != null) {
-            const b = p.best || {};
-            const c = p.cur || {};
-            const fmtA = (A) => {
-              if (!A || !A.length) return '--';
-              return A.map(r => r.map(x => Number(x).toFixed(3)).join('  ')).join('\\n');
-            };
-            el.innerHTML = `
-              <div class="kpi"><b>Purity Debug</b> (step ${p.step})</div>
-              <div class="kpi">best: diag=${(b.diag||[]).map(x=>Number(x).toFixed(3)).join(', ')} offdiag_mean=${Number(b.offdiag_mean||0).toFixed(4)} loss0=${Number(b.loss0||0).toFixed(6)}</div>
-              <div class="purityMono">${fmtA(b.A).replace(/\\n/g,'<br/>')}</div>
-              <div class="kpi" style="margin-top:8px">cur: diag=${(c.diag||[]).map(x=>Number(x).toFixed(3)).join(', ')} offdiag_mean=${Number(c.offdiag_mean||0).toFixed(4)} loss0=${Number(c.loss0||0).toFixed(6)}</div>
-              <div class="purityMono">${fmtA(c.A).replace(/\\n/g,'<br/>')}</div>
-            `;
+      }
+
+      function _getRgbWeightsFromMeta(){
+        const meta = lastStatus ? (lastStatus.meta || {}) : {};
+        const S = meta.spectra || {};
+        const W = S.rgb_weights || {};
+        return {
+          R: numOr(W.R, 1.0),
+          G: numOr(W.G, 1.0),
+          B: numOr(W.B, 1.0),
+        };
+      }
+
+      function computePurityFromRgb(rgb){
+        // rgb: [3][C] arrays, order [R,G,B]
+        if (!rgb || !rgb.length || !rgb[0] || !rgb[0].length) return null;
+        const C = rgb[0].length;
+        const w = _getRgbWeightsFromMeta();
+
+        const S = [
+          rgb[0].map(v => w.R * Number(v)),
+          rgb[1].map(v => w.G * Number(v)),
+          rgb[2].map(v => w.B * Number(v)),
+        ];
+
+        // Default to 3 equal contiguous bins across wavelength index.
+        const e1 = Math.floor(C / 3);
+        const e2 = Math.floor((2 * C) / 3);
+        const bands = [
+          {name:'B', i0:0, i1:e1},
+          {name:'G', i0:e1, i1:e2},
+          {name:'R', i0:e2, i1:C},
+        ];
+        const mean = (arr, i0, i1) => {
+          const n = Math.max(1, i1 - i0);
+          let sum = 0;
+          for (let i=i0;i<i1;i++) sum += Number(arr[i]);
+          return sum / n;
+        };
+
+        // A: rows = pixel channel [R,G,B], cols = band [B,G,R]
+        const A = [
+          [mean(S[0], bands[0].i0, bands[0].i1), mean(S[0], bands[1].i0, bands[1].i1), mean(S[0], bands[2].i0, bands[2].i1)],
+          [mean(S[1], bands[0].i0, bands[0].i1), mean(S[1], bands[1].i0, bands[1].i1), mean(S[1], bands[2].i0, bands[2].i1)],
+          [mean(S[2], bands[0].i0, bands[0].i1), mean(S[2], bands[1].i0, bands[1].i1), mean(S[2], bands[2].i0, bands[2].i1)],
+        ];
+
+        const diag = [A[0][2], A[1][1], A[2][0]]; // (R,G,B) on col order [B,G,R]
+        let off = 0, cnt = 0;
+        for (let r=0;r<3;r++){
+          for (let c=0;c<3;c++){
+            const isDiag = (r===0 && c===2) || (r===1 && c===1) || (r===2 && c===0);
+            if (!isDiag){
+              off += A[r][c];
+              cnt += 1;
+            }
           }
-        } catch(e) { /* ignore */ }
+        }
+        const offdiag_mean = (cnt>0) ? (off/cnt) : 0;
+        return {A, diag, offdiag_mean, bands, C, w};
+      }
+
+      function drawPurityHeatmap(A){
+        if (!purityCanvas) return;
+        const ctx = purityCanvas.getContext('2d');
+        const W = purityCanvas.width, H = purityCanvas.height;
+        ctx.clearRect(0,0,W,H);
+
+        const padL = 34, padT = 26, padR = 6, padB = 10;
+        const gridW = W - padL - padR;
+        const gridH = H - padT - padB;
+        const cellW = gridW / 3.0;
+        const cellH = gridH / 3.0;
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0,0,W,H);
+
+        for (let r=0;r<3;r++){
+          for (let c=0;c<3;c++){
+            const v = Math.max(0, Math.min(1, Number(A[r][c] || 0)));
+            const g = Math.round(255 * (1.0 - v)); // black=1
+            ctx.fillStyle = `rgb(${g},${g},${g})`;
+            ctx.fillRect(padL + c*cellW, padT + r*cellH, cellW, cellH);
+          }
+        }
+
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.lineWidth = 2;
+        for (let i=0;i<=3;i++){
+          ctx.beginPath();
+          ctx.moveTo(padL + i*cellW, padT);
+          ctx.lineTo(padL + i*cellW, padT + 3*cellH);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(padL, padT + i*cellH);
+          ctx.lineTo(padL + 3*cellW, padT + i*cellH);
+          ctx.stroke();
+        }
+
+        ctx.fillStyle = '#64748b';
+        ctx.font = '12px -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif';
+        const col = ['B','G','R'];
+        for (let c=0;c<3;c++){
+          const x = padL + c*cellW + cellW/2;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(col[c], x, 12);
+        }
+        const row = ['R','G','B'];
+        for (let r=0;r<3;r++){
+          const y = padT + r*cellH + cellH/2;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(row[r], 16, y);
+        }
+      }
+
+      function renderPurity(p, step, idx){
+        if (!p || !p.A) {
+          if (purityTable) purityTable.textContent = 'waiting for first spectrum...';
+          if (kpiPurity) kpiPurity.textContent = '-';
+          if (purityHint) purityHint.textContent = 'computed from the currently selected spectrum';
+          if (purityCanvas) {
+            const ctx = purityCanvas.getContext('2d');
+            ctx.clearRect(0,0,purityCanvas.width,purityCanvas.height);
+          }
+          return;
+        }
+        if (kpiPurity) kpiPurity.textContent = `(step ${step}, k=${idx})`;
+        const A = p.A;
+        const fmt = (x) => (Number.isFinite(Number(x)) ? Number(x).toFixed(4) : '----');
+        const lines = [];
+        lines.push('A (rows: pixel R,G,B ; cols: band B,G,R)');
+        lines.push('      B        G        R');
+        lines.push(`R  ${fmt(A[0][0])}  ${fmt(A[0][1])}  ${fmt(A[0][2])}`);
+        lines.push(`G  ${fmt(A[1][0])}  ${fmt(A[1][1])}  ${fmt(A[1][2])}`);
+        lines.push(`B  ${fmt(A[2][0])}  ${fmt(A[2][1])}  ${fmt(A[2][2])}`);
+        lines.push('');
+        lines.push(`diag (R,G,B) = ${p.diag.map(fmt).join(', ')}`);
+        lines.push(`offdiag_mean = ${fmt(p.offdiag_mean)}`);
+        lines.push('');
+        lines.push(`bands: B=[${p.bands[0].i0}..${p.bands[0].i1-1}]  G=[${p.bands[1].i0}..${p.bands[1].i1-1}]  R=[${p.bands[2].i0}..${p.bands[2].i1-1}]`);
+        lines.push(`rgb_weights: R=${p.w.R.toFixed(2)}  G=${p.w.G.toFixed(2)}  B=${p.w.B.toFixed(2)}`);
+        if (purityTable) purityTable.textContent = lines.join('\\n');
+        if (purityHint) purityHint.textContent = 'heatmap fixed to [0,1], grayscale (black=1)';
+        drawPurityHeatmap(A);
       }
 
       async function loadSpectrum(step, idx){
@@ -858,8 +1069,12 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
           if (specHint.textContent === 'click a thumbnail' || specHint.textContent === '') {
             specHint.textContent = `forward model output: 3x${C} (400-700 nm)`;
           }
+
+          const p = computePurityFromRgb(rgb);
+          renderPurity(p, step, idx);
         } catch(e) {
           specHint.textContent = 'spectrum unavailable (surrogate not configured)';
+          renderPurity(null, step, idx);
         }
       }
 

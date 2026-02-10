@@ -273,6 +273,10 @@
             <div class="kpi"><b>FDTD verify</b></div>
             <input id="fdtdToggle" type="checkbox" />
           </div>
+          <div class="toggleRow">
+            <div class="kpi"><b>Dry-run</b></div>
+            <input id="dryRunToggle" type="checkbox" />
+          </div>
         </div>
         <div class="controls">
           <div class="field">
@@ -451,6 +455,7 @@
         scale: localStorage.getItem('loss_scale') || 'log',
         window: localStorage.getItem('loss_window') || 'all',
         fdtd: (localStorage.getItem('fdtd_verify') || 'off'),
+        dryrun: (localStorage.getItem('dry_run') || 'off'),
         topk_mode: (localStorage.getItem('topk_mode') || 'best'),
         invert_view: (localStorage.getItem('invert_view') || 'on'),
         selected: {step:null, idx:0},
@@ -880,6 +885,15 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
           if (ui.selected.step != null) loadSpectrum(ui.selected.step, ui.selected.idx);
         });
       }
+
+      const dryRunToggle = document.getElementById('dryRunToggle');
+      if (dryRunToggle) {
+        dryRunToggle.checked = (ui.dryrun === 'on');
+        dryRunToggle.addEventListener('change', () => {
+          ui.dryrun = dryRunToggle.checked ? 'on' : 'off';
+          localStorage.setItem('dry_run', ui.dryrun);
+        });
+      }
       const runBtn = document.getElementById('runBtn');
       if (runBtn) {
         runBtn.addEventListener('click', async () => {
@@ -906,7 +920,8 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
           localStorage.setItem('loss_fill_min', String(fillMin));
           localStorage.setItem('loss_fill_max', String(fillMax));
           try{
-            const url = `/api/run/start?n_start=${encodeURIComponent(nStart)}&n_steps=${encodeURIComponent(nSteps)}&topk=${encodeURIComponent(topk)}&device=${encodeURIComponent(dev)}&chunk_size=${encodeURIComponent(chunk)}&fdtd_verify=${ui.fdtd==='on'?1:0}&fdtd_every=${encodeURIComponent(fdtdEvery)}&w_purity=${encodeURIComponent(wPurity)}&w_abs=${encodeURIComponent(wAbs)}&w_gray=${encodeURIComponent(wGray)}&w_tv=${encodeURIComponent(wTV)}&w_fill=${encodeURIComponent(wFill)}&fill_min=${encodeURIComponent(fillMin)}&fill_max=${encodeURIComponent(fillMax)}`;
+            const dryRun = (ui.dryrun === 'on') ? 1 : 0;
+            const url = `/api/run/start?n_start=${encodeURIComponent(nStart)}&n_steps=${encodeURIComponent(nSteps)}&topk=${encodeURIComponent(topk)}&dry_run=${encodeURIComponent(dryRun)}&device=${encodeURIComponent(dev)}&chunk_size=${encodeURIComponent(chunk)}&fdtd_verify=${ui.fdtd==='on'?1:0}&fdtd_every=${encodeURIComponent(fdtdEvery)}&w_purity=${encodeURIComponent(wPurity)}&w_abs=${encodeURIComponent(wAbs)}&w_gray=${encodeURIComponent(wGray)}&w_tv=${encodeURIComponent(wTV)}&w_fill=${encodeURIComponent(wFill)}&fill_min=${encodeURIComponent(fillMin)}&fill_max=${encodeURIComponent(fillMax)}`;
             const r = await fetch(url, {method:'POST'});
             if (!r.ok) throw new Error(String(r.status));
             setRunStatus('started');

@@ -376,6 +376,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         n_start: int = Query(default=200, ge=1),
         n_steps: int = Query(default=2000, ge=1),
         topk: int = Query(default=50, ge=1),
+        dry_run: int = Query(default=0, ge=0, le=1),
         device: str = Query(default="cpu"),
         chunk_size: int = Query(default=64, ge=1),
         fdtd_verify: int = Query(default=0, ge=0, le=1),
@@ -437,6 +438,8 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
             "--progress-dir",
             str(progress_dir),
         ]
+        if int(dry_run) == 1:
+            cmd.append("--dry-run")
         rstate.lines.clear()
         rstate.started_ts = datetime.now(timezone.utc).isoformat()
         rstate.last_exit_code = None

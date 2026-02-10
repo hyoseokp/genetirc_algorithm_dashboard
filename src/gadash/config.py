@@ -109,6 +109,19 @@ def load_config(main_cfg_path: str | Path, paths_cfg_path: str | Path | None = N
     main = load_yaml(main_cfg_path)
     paths = load_yaml(paths_cfg_path) if paths_cfg_path else {}
 
+    # Backward-compat: accept older key names used in early iterations.
+    # - checkpoint_path -> forward_checkpoint
+    # - cr_recon_root    -> forward_model_root
+    if isinstance(paths, dict):
+        if "forward_checkpoint" not in paths and "checkpoint_path" in paths:
+            paths["forward_checkpoint"] = paths.get("checkpoint_path")
+        if "forward_model_root" not in paths and "cr_recon_root" in paths:
+            paths["forward_model_root"] = paths.get("cr_recon_root")
+        if "forward_config_yaml" not in paths:
+            root = paths.get("forward_model_root")
+            if isinstance(root, str) and root:
+                paths["forward_config_yaml"] = str(Path(root) / "configs" / "default.yaml")
+
     rgb_w = _deep_get(main, "spectra", "rgb_weights", default=None)
     if rgb_w is None:
         rgb_w = {"R": 1.0, "G": 2.0, "B": 1.0}

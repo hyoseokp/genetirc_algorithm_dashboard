@@ -30,6 +30,11 @@ def main() -> int:
             root = str(cfg.paths.forward_model_root or "")
             ckpt = str(cfg.paths.forward_checkpoint or "")
             cfg_yaml = str(cfg.paths.forward_config_yaml or "")
+            print(f"[DASHBOARD] Loading surrogate...")
+            print(f"  forward_model_root: {root}")
+            print(f"  checkpoint_path: {ckpt}")
+            print(f"  config_yaml: {cfg_yaml}")
+            print(f"  device: {args.device}")
             if args.surrogate in ("auto", "crrecon"):
                 surrogate = CRReconSurrogate(
                     forward_model_root=Path(root),
@@ -37,8 +42,11 @@ def main() -> int:
                     config_yaml=Path(cfg_yaml),
                     device=torch.device(str(args.device)),
                 )
+                print(f"[DASHBOARD] ✓ Surrogate loaded successfully")
         except Exception as e:
-            print(f"[DASHBOARD] surrogate disabled: {e}")
+            print(f"[DASHBOARD] ✗ Surrogate load failed: {e}")
+            import traceback
+            traceback.print_exc()
             surrogate = None
 
     app = create_app(progress_dir=Path(args.progress_dir), surrogate=surrogate)

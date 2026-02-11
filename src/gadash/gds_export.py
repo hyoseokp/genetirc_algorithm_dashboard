@@ -18,7 +18,7 @@ except Exception as e:  # pragma: no cover
 class GDSExportOptions:
     layer: int = 1
     datatype: int = 0
-    pixel_size: float = 1.0  # arbitrary unit
+    pixel_size: float = 2.0 / 128  # um per pixel (2 um period / 128 pixels)
 
 
 def _rectangles_from_binary_grid(grid: np.ndarray) -> list[tuple[int, int, int, int]]:
@@ -86,6 +86,9 @@ def export_struct128_to_gds(
     cell = lib.new_cell(cell_name)
 
     rects = _rectangles_from_binary_grid(struct)
+    if len(rects) == 0:
+        fill = float((struct.astype(np.float32) > 0.5).mean())
+        raise ValueError(f"empty structure -> no polygons for GDS export (structure_id={sid}, fill={fill:.6f})")
     ps = float(options.pixel_size)
     for x0, y0, x1, y1 in rects:
         r = gdstk.rectangle(
@@ -112,4 +115,3 @@ def export_struct128_to_gds(
         except Exception:
             pass
     return out_path
-

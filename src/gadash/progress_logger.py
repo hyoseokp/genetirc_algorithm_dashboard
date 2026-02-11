@@ -19,14 +19,17 @@ class MetricsLine:
 
 
 class ProgressLogger:
-    def __init__(self, progress_dir: str | Path):
+    def __init__(self, progress_dir: str | Path, engine: str = "ga"):
         self.progress_dir = Path(progress_dir)
         self.progress_dir.mkdir(parents=True, exist_ok=True)
         (self.progress_dir / "previews").mkdir(parents=True, exist_ok=True)
-        self.metrics_path = self.progress_dir / "metrics.jsonl"
+        self.engine = str(engine).lower()
+        # Separate metrics file for each engine
+        self.metrics_path = self.progress_dir / f"metrics_{self.engine}.jsonl"
 
     def write_meta(self, meta: dict[str, Any]) -> None:
-        p = self.progress_dir / "run_meta.json"
+        # Separate meta file for each engine
+        p = self.progress_dir / f"run_meta_{self.engine}.json"
         p.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def append_metrics(self, d: dict[str, Any]) -> None:

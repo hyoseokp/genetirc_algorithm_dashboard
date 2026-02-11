@@ -3,8 +3,10 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 
@@ -43,6 +45,7 @@ def load_lumapi(*, lumerical_root: Path):
     if spec is None or spec.loader is None:
         raise ImportError(f"failed to load spec for lumapi.py at {lumapi_py}")
     mod = importlib.util.module_from_spec(spec)
+    warnings.filterwarnings("ignore", category=SyntaxWarning)
     spec.loader.exec_module(mod)
     return mod
 
@@ -57,6 +60,13 @@ class LumapiBridge:
 
     # Lumerical scripts are template-dependent; these are overridable hooks.
     layer_map: str = "1:0"
+    target_material: str = "Si3N4 (Silicon Nitride) - Phillip"
+    z_min: float = 0.0
+    z_max: float = 600e-9
+    trans_1: str = "Trans_1"
+    trans_2: str = "Trans_2"
+    trans_3: str = "Trans_3"
+    preclean_names: list[str] | None = None
 
     def __post_init__(self) -> None:
         self.lumerical_root = Path(self.lumerical_root)
@@ -117,9 +127,47 @@ class LumapiBridge:
     def import_gds(self, *, gds_path: Path, cell_name: str) -> None:
         if self._fdtd is None:
             raise RuntimeError("FDTD session not open")
-        script = gds_import_script(gds_path=str(gds_path), cell_name=cell_name, layer_map=self.layer_map)
+        fallback = cell_name
+        if "_" in cell_name:
+            # structure_00012 -> structure_12 fallback used in original workflow
+            stem, _, tail = cell_name.rpartition("_")
+            try:
+                fallback = f"{stem}_{int(tail)}"
+            except Exception:
+                fallback = cell_name
+        script = gds_import_script(
+            gds_path=str(gds_path),
+            cell_name_primary=cell_name,
+            cell_name_fallback=fallback,
+            layer_map=self.layer_map,
+            target_material=self.target_material,
+            z_min=self.z_min,
+            z_max=self.z_max,
+            preclean_names=(self.preclean_names or []),
+        )
         self._fdtd.switchtolayout()
-        self._fdtd.eval(script)
+        try:
+            self._fdtd.eval(script)
+        except Exception as e:
+            raise RuntimeError(
+                f"fdtd.eval(gdsimport) failed: gds={gds_path} cellA={cell_name} "
+                f"cellB={fallback} layer_map={self.layer_map} material={self.target_material} err={e}"
+            ) from e
+        import_ok = int(np.asarray(self._fdtd.getv("import_ok")).reshape(-1)[0])
+        try:
+            self._fdtd.eval('import_count=0; try{ import_count=getnamednumber("IMPORTED_GDS"); } catch(errCnt) { import_count=0; }')
+            import_count = int(np.asarray(self._fdtd.getv("import_count")).reshape(-1)[0])
+        except Exception:
+            import_count = -1
+        if import_ok != 1:
+            import_err = str(self._fdtd.getv("import_err"))
+            used_cell = str(self._fdtd.getv("used_cell"))
+            raise RuntimeError(
+                f"gdsimport failed (used_cell={used_cell}, import_count={import_count}): {import_err}"
+            )
+        if import_count == 0:
+            used_cell = str(self._fdtd.getv("used_cell"))
+            raise RuntimeError(f"gdsimport returned zero geometry (used_cell={used_cell}, import_count=0)")
 
     def run(self) -> None:
         if self._fdtd is None:
@@ -133,19 +181,62 @@ class LumapiBridge:
         """
         if self._fdtd is None:
             raise RuntimeError("FDTD session not open")
-        self._fdtd.eval(extract_spectra_script())
-        _f = np.asarray(self._fdtd.getv("f_vec")).astype(np.float32).reshape(-1)
-        T = np.asarray(self._fdtd.getv("T")).astype(np.float32)
+        triples: list[tuple[str, str, str]] = []
+        triples.append((self.trans_1, self.trans_2, self.trans_3))
+        for tri in [
+            ("Trans_1", "Trans_2", "Trans_3"),
+            ("trans_1", "trans_2", "trans_3"),
+            ("T1", "T2", "T3"),
+            ("R", "G", "B"),
+        ]:
+            if tri not in triples:
+                triples.append(tri)
 
-        if T.ndim == 3 and T.shape[0:2] == (2, 2):
-            return T
-        if T.ndim != 2:
-            raise ValueError(f"expected T with ndim 2 (4,N) or (N,4), got shape={T.shape}")
-        if 4 in T.shape:
-            if T.shape[0] == 4:
-                v = T
-            else:
-                v = T.T
-            v = v.reshape(4, -1)
-            return v.reshape(2, 2, -1)
-        raise ValueError(f"expected T to have a 4-dim axis, got shape={T.shape}")
+        last_probe = ""
+        t1 = t2 = t3 = None
+        for m1, m2, m3 in triples:
+            self._fdtd.eval(extract_spectra_script(trans_1=m1, trans_2=m2, trans_3=m3))
+            vv1 = np.asarray(self._fdtd.getv("T1"), dtype=np.float32).reshape(-1)
+            vv2 = np.asarray(self._fdtd.getv("T2"), dtype=np.float32).reshape(-1)
+            vv3 = np.asarray(self._fdtd.getv("T3"), dtype=np.float32).reshape(-1)
+            if (vv1.size > 1) or (vv2.size > 1) or (vv3.size > 1):
+                t1, t2, t3 = vv1, vv2, vv3
+                break
+            last_probe = f"{m1},{m2},{m3}"
+
+        if t1 is None or t2 is None or t3 is None:
+            # Fallback: single monitor with T matrix (4,N)/(N,4)
+            try:
+                self._fdtd.eval(
+                    "m='monitor'; f_vec=getdata(m,'f'); T=getdata(m,'T');"
+                )
+                T = np.asarray(self._fdtd.getv("T"), dtype=np.float32)
+                if T.ndim == 2 and 4 in T.shape:
+                    v = T if T.shape[0] == 4 else T.T
+                    v = v.reshape(4, -1)
+                    return v.reshape(2, 2, -1).astype(np.float32, copy=False)
+            except Exception:
+                pass
+            raise RuntimeError(
+                "no transmission monitor results found; "
+                f"tried triples={triples}, last_probe={last_probe}, "
+                "and fallback monitor='monitor'/T"
+            )
+
+        n = int(max(t1.size, t2.size, t3.size))
+
+        def _fit(v: np.ndarray) -> np.ndarray:
+            if v.size == n:
+                return v
+            if v.size <= 1:
+                return np.zeros((n,), dtype=np.float32)
+            x = np.linspace(0.0, 1.0, num=v.size, dtype=np.float32)
+            xi = np.linspace(0.0, 1.0, num=n, dtype=np.float32)
+            return np.interp(xi, x, v).astype(np.float32)
+
+        r = _fit(t1)
+        g = _fit(t2)
+        b = _fit(t3)
+        # Build RGGB tensor from RGB monitors: [[R,G],[G,B]]
+        out = np.stack([r, g, g, b], axis=0).reshape(2, 2, n)
+        return out.astype(np.float32, copy=False)

@@ -1,6 +1,8 @@
 ﻿# Default GA config
 
 ga:
+  optimizer_type: ga       # "ga" or "cmaes"
+  cma_sigma0: 0.3          # CMA-ES initial step size
   population: 128
   generations: 200
   elite: 8  # legacy (not used for next-gen; we keep io.topk as the preserved set)
@@ -44,6 +46,7 @@ loss:
   w_fill: 1.0
   fill_min: 0.2
   fill_max: 0.5
+  purity_dist_w: 0.0    # spectral-distance weight: 0=uniform, >0=far-band leak penalized more
 
 io:
   topk: 8

@@ -38,6 +38,14 @@ class FDTDRuntimeCfg:
     chunk_size: int = 8
     max_retries: int = 2
     timeout_s: dict[str, int] | None = None
+    layer_map: str = "1:0"
+    target_material: str = "Si3N4 (Silicon Nitride) - Phillip"
+    z_min: float = 0.0
+    z_max: float = 600e-9
+    trans_1: str = "Trans_1"
+    trans_2: str = "Trans_2"
+    trans_3: str = "Trans_3"
+    preclean_names: list[str] | None = None
 
 
 def resolve_fdtd_cfg(*, fdtd_yaml: str | Path, paths_yaml: str | Path) -> FDTDRuntimeCfg:
@@ -51,6 +59,18 @@ def resolve_fdtd_cfg(*, fdtd_yaml: str | Path, paths_yaml: str | Path) -> FDTDRu
     chunk_size = int(fd.get("chunk_size", 8) or 8)
     max_retries = int(fd.get("max_retries", 2) or 2)
     timeout_s = fd.get("timeout_s") if isinstance(fd.get("timeout_s"), dict) else None
+    layer_map = str(fd.get("layer_map", "1:0") or "1:0")
+    target_material = str(fd.get("target_material", "Si3N4 (Silicon Nitride) - Phillip") or "Si3N4 (Silicon Nitride) - Phillip")
+    z_min = float(fd.get("z_min", 0.0) or 0.0)
+    z_max = float(fd.get("z_max", 600e-9) or 600e-9)
+    trans_1 = str(fd.get("trans_1", "Trans_1") or "Trans_1")
+    trans_2 = str(fd.get("trans_2", "Trans_2") or "Trans_2")
+    trans_3 = str(fd.get("trans_3", "Trans_3") or "Trans_3")
+    preclean_names_obj = fd.get("preclean_names", [])
+    if isinstance(preclean_names_obj, list):
+        preclean_names = [str(x) for x in preclean_names_obj if str(x).strip()]
+    else:
+        preclean_names = []
 
     # Patch from paths.yaml when empty.
     paths = _load_yaml_dict(paths_yaml)
@@ -75,6 +95,14 @@ def resolve_fdtd_cfg(*, fdtd_yaml: str | Path, paths_yaml: str | Path) -> FDTDRu
         chunk_size=chunk_size,
         max_retries=max_retries,
         timeout_s=timeout_s,
+        layer_map=layer_map,
+        target_material=target_material,
+        z_min=z_min,
+        z_max=z_max,
+        trans_1=trans_1,
+        trans_2=trans_2,
+        trans_3=trans_3,
+        preclean_names=preclean_names,
     )
 
 
@@ -101,7 +129,7 @@ def verify_topk_with_fdtd(
     fdtd_cfg: FDTDRuntimeCfg,
     out_dir: str | Path = r"C:\gadash_fdtd_results",
     k: int | None = None,
-    layer_map: str = "1:0",
+    layer_map: str = "",
     cell_prefix: str = "structure",
 ) -> FDTDVerifyResult:
     """Run Lumerical FDTD on Top-K structures and stack RGGB spectra."""
@@ -136,7 +164,14 @@ def verify_topk_with_fdtd(
         lumerical_root=Path(fdtd_cfg.lumerical_root),
         template_fsp=Path(fdtd_cfg.template_fsp),
         hide=bool(fdtd_cfg.hide),
-        layer_map=str(layer_map),
+        layer_map=str(layer_map or fdtd_cfg.layer_map),
+        target_material=str(fdtd_cfg.target_material),
+        z_min=float(fdtd_cfg.z_min),
+        z_max=float(fdtd_cfg.z_max),
+        trans_1=str(fdtd_cfg.trans_1),
+        trans_2=str(fdtd_cfg.trans_2),
+        trans_3=str(fdtd_cfg.trans_3),
+        preclean_names=list(fdtd_cfg.preclean_names or []),
     )
     paths = FDTDRunPaths(out_dir=spectra_dir)
     options = FDTDRuntimeOptions(chunk_size=int(fdtd_cfg.chunk_size), max_retries=int(fdtd_cfg.max_retries))

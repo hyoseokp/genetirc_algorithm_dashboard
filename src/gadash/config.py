@@ -17,6 +17,8 @@ class PathsConfig:
 
 @dataclass(frozen=True)
 class GAConfig:
+    optimizer_type: str = "ga"      # "ga" or "cmaes"
+    cma_sigma0: float = 0.3         # CMA-ES initial step size
     population: int = 128
     generations: int = 200
     elite: int = 8
@@ -70,6 +72,7 @@ class LossConfig:
     w_fill: float = 1.0
     fill_min: float = 0.2
     fill_max: float = 0.5
+    purity_dist_w: float = 0.0   # spectral-distance weight for purity loss
 
 
 @dataclass(frozen=True)
@@ -142,6 +145,8 @@ def load_config(main_cfg_path: str | Path, paths_cfg_path: str | Path | None = N
             forward_config_yaml=_expand_path(_deep_get(paths, "forward_config_yaml", default=None)),
         ),
         ga=GAConfig(
+            optimizer_type=str(_deep_get(main, "ga", "optimizer_type", default="ga")),
+            cma_sigma0=float(_deep_get(main, "ga", "cma_sigma0", default=0.3)),
             population=int(_deep_get(main, "ga", "population", default=128)),
             generations=int(_deep_get(main, "ga", "generations", default=200)),
             elite=int(_deep_get(main, "ga", "elite", default=8)),
@@ -180,6 +185,7 @@ def load_config(main_cfg_path: str | Path, paths_cfg_path: str | Path | None = N
             w_fill=float(_deep_get(main, "loss", "w_fill", default=1.0)),
             fill_min=float(_deep_get(main, "loss", "fill_min", default=0.2)),
             fill_max=float(_deep_get(main, "loss", "fill_max", default=0.5)),
+            purity_dist_w=float(_deep_get(main, "loss", "purity_dist_w", default=0.0)),
         ),
         io=IOConfig(
             topk=int(_deep_get(main, "io", "topk", default=8)),

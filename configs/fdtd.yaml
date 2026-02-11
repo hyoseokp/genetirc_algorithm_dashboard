@@ -5,6 +5,17 @@
 fdtd:
   lumerical_root: ""
   template_fsp: ""
+  layer_map: "1:0"
+  target_material: "Si3N4 (Silicon Nitride) - Phillip"
+  z_min: 0.0
+  z_max: 6.0e-07
+  trans_1: "Trans_1"
+  trans_2: "Trans_2"
+  trans_3: "Trans_3"
+  # Optional: object names to force-delete from template before gdsimport.
+  # Add your static template structure object name here if needed.
+  preclean_names:
+    - "IMPORTED_GDS"
   hide: true
   chunk_size: 8
   max_retries: 2
@@ -12,4 +23,3 @@ fdtd:
     import: 120
     run: 600
     extract: 120
-

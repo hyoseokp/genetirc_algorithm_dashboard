@@ -80,7 +80,7 @@
       }
       .controls {
         display: grid;
-        grid-template-columns: 1.2fr 1fr 1fr 1fr 1fr 1fr 1fr auto;
+        grid-template-columns: 1fr 1.2fr 1fr 1fr 1fr 1fr 1fr 1fr auto;
         gap: 10px;
         align-items: end;
         margin-top: 10px;
@@ -369,11 +369,23 @@
             </select>
           </div>
           <div class="field">
+            <label for="inOptimizer">optimizer</label>
+            <select id="inOptimizer">
+              <option value="ga" selected>GA</option>
+              <option value="cmaes">CMA-ES</option>
+              <option value="cmaes-multi">CMA-ES (Multi-Start)</option>
+            </select>
+          </div>
+          <div class="field">
             <label for="inGenBackend">generator</label>
             <select id="inGenBackend">
               <option value="rule_mfs" selected>rule_mfs (soft)</option>
               <option value="rule_mfs_scipy">rule_mfs_scipy (exact)</option>
             </select>
+          </div>
+          <div class="field" id="multiStartField" style="display:none;">
+            <label for="inNumRuns">num_runs</label>
+            <input id="inNumRuns" type="number" min="2" max="10" step="1" value="3" />
           </div>
           <div class="field">
             <label for="inNStart">n_start</label>
@@ -389,13 +401,14 @@
           </div>
           <div class="field">
             <label for="inChunk">chunk_size</label>
-            <input id="inChunk" type="number" min="1" step="1" value="64" />
+            <input id="inChunk" type="number" min="1" step="1" value="32" />
           </div>
           <div class="field">
             <label for="inFdtdEvery">fdtd_every</label>
             <input id="inFdtdEvery" type="number" min="0" step="1" value="10" />
           </div>
           <button class="btn" id="runBtn">Run optimization</button>
+          <button class="btn secondary" id="resumeBtn" type="button">Resume</button>
           <button class="btn secondary" id="stopBtn" type="button">Stop</button>
           <button class="btn danger" id="resetBtn" type="button">Reset</button>
         </div>
@@ -403,7 +416,7 @@
         <div class="runStatus" id="runStatus">idle</div>
 
         <details class="adv">
-          <summary>Loss weights</summary>
+          <summary>Common parameters</summary>
           <div class="controls loss">
             <div class="field">
               <label for="inWPurity">w_purity</label>
@@ -425,6 +438,28 @@
               <label for="inFillMax">fill_max</label>
               <input id="inFillMax" type="number" step="0.01" value="0.5" />
             </div>
+            <div class="field">
+              <label for="inPurityDistW">purity_dist_w</label>
+              <input id="inPurityDistW" type="number" step="0.1" value="0" title="Spectral-distance weight: 0=uniform, >0=far-band contamination penalized more" />
+            </div>
+            <div class="field">
+              <label for="inWR">w_R (rgb)</label>
+              <input id="inWR" type="number" min="0" step="0.1" value="1.0" />
+            </div>
+            <div class="field">
+              <label for="inWG">w_G (rgb)</label>
+              <input id="inWG" type="number" min="0" step="0.1" value="2.0" />
+            </div>
+            <div class="field">
+              <label for="inWB">w_B (rgb)</label>
+              <input id="inWB" type="number" min="0" step="0.1" value="1.0" />
+            </div>
+          </div>
+        </details>
+
+        <details class="adv" id="gaParamsSection" style="display:none;">
+          <summary>GA parameters</summary>
+          <div class="controls loss">
             <div class="field">
               <label for="inMutP">mutation_p</label>
               <input id="inMutP" type="number" step="0.05" value="0.2" />
@@ -448,6 +483,16 @@
             <div class="field">
               <label for="inCloneSigMax">clone_sigma_max</label>
               <input id="inCloneSigMax" type="number" min="0" step="0.01" value="0.08" />
+            </div>
+          </div>
+        </details>
+
+        <details class="adv" id="cmaesParamsSection" style="display:none;">
+          <summary>CMA-ES parameters</summary>
+          <div class="controls loss">
+            <div class="field">
+              <label for="inCmaSigma0">cma_sigma0</label>
+              <input id="inCmaSigma0" type="number" min="0" step="0.01" value="0.3" />
             </div>
           </div>
         </details>
@@ -722,11 +767,15 @@
             responsive: true,
             maintainAspectRatio: false,
             animation: false,
-            interaction: { mode: 'index', intersect: false },
+            parsing: false,
+            interaction: { mode: 'nearest', intersect: false },
             scales: {
               x: {
+                type: 'linear',
+                min: 400,
+                max: 700,
                 grid: { display: false },
-                ticks: { color: tickColor, font: { size: 10, family: fontFamily }, maxTicksLimit: 20 },
+                ticks: { color: tickColor, font: { size: 10, family: fontFamily }, maxTicksLimit: 16 },
                 title: { display: true, text: 'wavelength (nm)', color: tickColor, font: { size: 11, family: fontFamily } }
               },
               y: {
@@ -829,22 +878,30 @@
         const w_fill = numOr(L.w_fill, 1.0);
         const fill_min = numOr(L.fill_min, 0.2);
         const fill_max = numOr(L.fill_max, 0.5);
+        const pDistW = numOr(L.purity_dist_w, 0.0);
         const wR = numOr(W.R, 1.0);
         const wG = numOr(W.G, 1.0);
         const wB = numOr(W.B, 1.0);
 
         // Keep the original KaTeX auto-render approach: inject $$...$$ and call renderMathInElement.
+        const pDistLine = (pDistW !== 0.0)
+          ? `W_{ij}=1+${pDistW.toFixed(2)}\\,|i-j|,\\quad L_{\\mathrm{purity}}=\\sum_{i,j}W_{ij}(A_{ij}-I_{ij})^2`
+          : `L_{\\mathrm{purity}}=\\lVert A-I\\rVert_F^2`;
         const texBody = `\\begin{aligned}
-&\\textbf{(Purity matrix }A\\textbf{ is shown in the Purity panel below.)}\\\\[6pt]
-&\\textbf{Spectral loss:}\\\\
-&\\qquad L_{\\mathrm{purity}}=\\lVert A-I\\rVert_F^2,\\qquad
-L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
-&\\qquad L_{\\mathrm{spec}}=${w_purity.toFixed(3)}\\,L_{\\mathrm{purity}}+${w_abs.toFixed(3)}\\,L_{\\mathrm{abs}}.\\\\[8pt]
+&\\textbf{Weights (configured):}\\\\
+&w_{\\mathrm{purity}} = ${w_purity.toFixed(4)}\\qquad w_{\\mathrm{abs}} = ${w_abs.toFixed(4)}\\qquad w_{\\mathrm{fill}} = ${w_fill.toFixed(4)}\\\\
+&w_R = ${wR.toFixed(2)}\\qquad w_G = ${wG.toFixed(2)}\\qquad w_B = ${wB.toFixed(2)}\\\\[10pt]
+&\\textbf{Purity matrix }(3{\\times}3)\\textbf{:}\\\\
+&\\qquad A_{ij} = w_i \\cdot \\mathrm{mean}(S_i,\\ \\mathrm{band}_j)\\\\
+&\\textbf{Spectral loss components:}\\\\
+&${pDistLine}\\\\
+&L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2\\\\
+&L_{\\mathrm{spec}}=w_{\\mathrm{purity}} \\cdot L_{\\mathrm{purity}}+w_{\\mathrm{abs}} \\cdot L_{\\mathrm{abs}}\\\\[8pt]
 &\\textbf{Fill constraint:}\\\\
-&\\qquad f=\\mathrm{mean}(x),\\quad f\\in[${fill_min.toFixed(2)},\\ ${fill_max.toFixed(2)}].\\\\
-&\\qquad L_{\\mathrm{fill}}=\\mathrm{softplus}(f_{\\min}-f)^2+\\mathrm{softplus}(f-f_{\\max})^2.\\\\[8pt]
-&\\textbf{Total:}\\\\
-&\\qquad L_{\\mathrm{total}}=L_{\\mathrm{spec}}+${w_fill.toFixed(3)}\\,L_{\\mathrm{fill}}.
+&f=\\mathrm{mean}(\\text{struct}),\\quad f\\in[${fill_min.toFixed(3)},\\ ${fill_max.toFixed(3)}]\\\\
+&L_{\\mathrm{fill}}=\\mathrm{softplus}(${fill_min.toFixed(3)}-f)^2+\\mathrm{softplus}(f-${fill_max.toFixed(3)})^2\\\\[8pt]
+&\\textbf{Total loss:}\\\\
+&L_{\\mathrm{total}}=L_{\\mathrm{spec}}+w_{\\mathrm{fill}} \\cdot L_{\\mathrm{fill}}
 \\end{aligned}`;
 
         const box = document.getElementById('lossFormula');
@@ -874,18 +931,40 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
           applyStatus(st);
         } catch(e) { /* ignore */ }
 
-        // Run status
+        // Run status (multi-seed aware)
         try{
           const rs = await fetchJSON('/api/run/status');
-          if (rs.running) {
+          const seedsStatus = rs.seeds_status || {};
+          const activeSeeds = rs.active_seeds || [];
+          const numRunning = rs.num_running || 0;
+
+          if (activeSeeds.length > 1 || numRunning > 1) {
+            // Multi-seed display
+            const parts = [];
+            for (const s of activeSeeds) {
+              const ss = seedsStatus[String(s)];
+              if (!ss) continue;
+              const label = ss.running ? 'running' : (ss.last_exit_code != null ? `exit=${ss.last_exit_code}` : 'idle');
+              parts.push(`seed=${s}: ${label}`);
+            }
+            const tail = rs.tail || [];
+            const lastLine = tail.length ? '\n' + tail[tail.length - 1] : '';
+            setRunStatus(`${numRunning}/${activeSeeds.length} running  |  ${parts.join('  |  ')}${lastLine}`);
+          } else if (rs.running) {
             const tail = rs.tail || [];
             setRunStatus('running: ' + (tail.length ? tail[tail.length-1] : '...'));
+          } else if (activeSeeds.length > 0) {
+            const s0 = activeSeeds[0];
+            const ss = seedsStatus[String(s0)];
+            if (ss && ss.last_exit_code != null) {
+              setRunStatus('last exit: ' + ss.last_exit_code);
+            }
           } else if (rs.last_exit_code != null) {
             setRunStatus('last exit: ' + rs.last_exit_code);
           }
         } catch(e) { /* ignore */ }
 
-        // TopK
+        // TopK (multi-seed aware)
         try{
           const t = await fetchJSON(`/api/topk/latest?mode=${encodeURIComponent(ui.topk_mode)}`);
           if (t.step == null) {
@@ -894,10 +973,22 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
             topkHint.textContent = '';
             return;
           }
-          const key = String(t.mode||ui.topk_mode) + ':' + String(t.step) + ':' + String(t.k);
-          kpiTopk.textContent = `(step ${t.step}, K=${t.k}, mode=${t.mode||ui.topk_mode})`;
+          const isMerged = !!t.merged;
+          const seedOrigins = t.seed_origins || [];
+          const seedSteps = t.seed_steps || {};
+          const nSeeds = Object.keys(seedSteps).length;
+          const key = String(t.mode||ui.topk_mode) + ':' + String(t.step) + ':' + String(t.k) + ':' + (isMerged ? 'merged' : 'single');
+
+          if (isMerged) {
+            kpiTopk.textContent = `(merged ${nSeeds} seeds, K=${t.k}, mode=${t.mode||ui.topk_mode})`;
+          } else {
+            kpiTopk.textContent = `(step ${t.step}, K=${t.k}, mode=${t.mode||ui.topk_mode})`;
+          }
+
           if (key !== ui.lastTopkKey) {
             ui.lastTopkKey = key;
+            // Store merged data for spectrum lookup if merged
+            ui._lastMergedTopk = isMerged ? t : null;
             const imgs = t.images || [];
             const fill = t.fill_frac || [];
             const best = (t.metrics && t.metrics.metric_best_loss) ? t.metrics.metric_best_loss : null;
@@ -907,15 +998,21 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
             for (let i=0;i<maxShow;i++){
               const inv = (ui.invert_view === 'on');
               const src = withCacheBust(imgs[i], t.step, inv);
+              const seedLabel = (isMerged && seedOrigins[i] != null) ? `seed=${seedOrigins[i]}  ` : '';
               const cap = [
+                seedLabel ? seedLabel : null,
                 (ui.topk_mode === 'cur') && cur && cur[i]!=null ? `cur_loss=${Number(cur[i]).toFixed(6)}` : null,
                 (ui.topk_mode !== 'cur') && best && best[i]!=null ? `best_loss=${Number(best[i]).toFixed(6)}` : null,
                 fill && fill[i]!=null ? `fill=${Number(fill[i]).toFixed(3)}` : null
               ].filter(Boolean).join('  ') || `k=${i}`;
-              html += `<div class="thumb" data-step="${t.step}" data-idx="${i}"><img src="${src}" onerror="this.closest('.thumb').classList.add('err'); this.alt='image failed';" /><div class="cap">${cap}</div></div>`;
+              html += `<div class="thumb" data-step="${t.step}" data-idx="${i}" data-merged="${isMerged?1:0}"><img src="${src}" onerror="this.closest('.thumb').classList.add('err'); this.alt='image failed';" /><div class="cap">${cap}</div></div>`;
             }
             thumbs.innerHTML = html;
-            topkHint.textContent = 'click a thumb to plot spectrum';
+            if (isMerged) {
+              topkHint.textContent = `best from ${nSeeds} seeds — click a thumb to plot spectrum`;
+            } else {
+              topkHint.textContent = 'click a thumb to plot spectrum';
+            }
 
             // auto-select k=0
             ui.selected.step = t.step;
@@ -943,20 +1040,20 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
         const C = rgb[0].length;
         const w = _getRgbWeightsFromMeta();
 
+        // Apply per-detector weights (same as Python spectral.py purity_matrix)
         const S = [
-          rgb[0].map(v => w.R * Number(v)),
-          rgb[1].map(v => w.G * Number(v)),
-          rgb[2].map(v => w.B * Number(v)),
+          rgb[0].map(v => w.R * Number(v)),  // R detector
+          rgb[1].map(v => w.G * Number(v)),  // G detector
+          rgb[2].map(v => w.B * Number(v)),  // B detector
         ];
 
-        // Default to 3 equal contiguous bins across wavelength index.
+        // Wavelength bands: B=short, G=mid, R=long (same as spectral.py bands_for_rgb)
         const e1 = Math.floor(C / 3);
         const e2 = Math.floor((2 * C) / 3);
-        const bands = [
-          {name:'B', i0:0, i1:e1},
-          {name:'G', i0:e1, i1:e2},
-          {name:'R', i0:e2, i1:C},
-        ];
+        const bandR = {i0: e2, i1: C};
+        const bandG = {i0: e1, i1: e2};
+        const bandB = {i0: 0, i1: e1};
+
         const mean = (arr, i0, i1) => {
           const n = Math.max(1, i1 - i0);
           let sum = 0;
@@ -964,26 +1061,27 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
           return sum / n;
         };
 
-        // A: rows = pixel channel [R,G,B], cols = band [B,G,R]
+        // A: rows = detector [R,G,B], cols = band [R,G,B]
+        // Matches Python spectral.py: idx = {"R":0, "G":1, "B":2}
         const A = [
-          [mean(S[0], bands[0].i0, bands[0].i1), mean(S[0], bands[1].i0, bands[1].i1), mean(S[0], bands[2].i0, bands[2].i1)],
-          [mean(S[1], bands[0].i0, bands[0].i1), mean(S[1], bands[1].i0, bands[1].i1), mean(S[1], bands[2].i0, bands[2].i1)],
-          [mean(S[2], bands[0].i0, bands[0].i1), mean(S[2], bands[1].i0, bands[1].i1), mean(S[2], bands[2].i0, bands[2].i1)],
+          [mean(S[0], bandR.i0, bandR.i1), mean(S[0], bandG.i0, bandG.i1), mean(S[0], bandB.i0, bandB.i1)],
+          [mean(S[1], bandR.i0, bandR.i1), mean(S[1], bandG.i0, bandG.i1), mean(S[1], bandB.i0, bandB.i1)],
+          [mean(S[2], bandR.i0, bandR.i1), mean(S[2], bandG.i0, bandG.i1), mean(S[2], bandB.i0, bandB.i1)],
         ];
 
-        const diag = [A[0][2], A[1][1], A[2][0]]; // (R,G,B) on col order [B,G,R]
+        // Diagonal: A[0][0]=R/R, A[1][1]=G/G, A[2][2]=B/B
+        const diag = [A[0][0], A[1][1], A[2][2]];
         let off = 0, cnt = 0;
         for (let r=0;r<3;r++){
           for (let c=0;c<3;c++){
-            const isDiag = (r===0 && c===2) || (r===1 && c===1) || (r===2 && c===0);
-            if (!isDiag){
+            if (r !== c){
               off += A[r][c];
               cnt += 1;
             }
           }
         }
         const offdiag_mean = (cnt>0) ? (off/cnt) : 0;
-        return {A, diag, offdiag_mean, bands, C, w};
+        return {A, diag, offdiag_mean, C, w};
       }
 
       function drawPurityHeatmap(A){
@@ -1028,7 +1126,7 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
 
         ctx.fillStyle = '#64748b';
         ctx.font = '12px -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif';
-        const col = ['B','G','R'];
+        const col = ['R','G','B'];
         for (let c=0;c<3;c++){
           const x = padL + c*cellW + cellW/2;
           ctx.textAlign = 'center';
@@ -1057,75 +1155,127 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
         }
         if (kpiPurity) kpiPurity.textContent = `(step ${step}, k=${idx})`;
         const A = p.A;
+        const w = p.w || {R:1,G:1,B:1};
         const fmt = (x) => (Number.isFinite(Number(x)) ? Number(x).toFixed(4) : '----');
-        // Show only the 3x3 matrix (requested).
+        // rows=detector [R,G,B], cols=band [R,G,B] (matches Python spectral.py)
         const lines = [
-          '      B        G        R',
-          `R  ${fmt(A[0][0])}  ${fmt(A[0][1])}  ${fmt(A[0][2])}`,
-          `G  ${fmt(A[1][0])}  ${fmt(A[1][1])}  ${fmt(A[1][2])}`,
-          `B  ${fmt(A[2][0])}  ${fmt(A[2][1])}  ${fmt(A[2][2])}`,
+          `weights: w_R=${w.R.toFixed(1)}  w_G=${w.G.toFixed(1)}  w_B=${w.B.toFixed(1)}`,
+          '',
+          '         R_band   G_band   B_band',
+          `R_det  ${fmt(A[0][0])}   ${fmt(A[0][1])}   ${fmt(A[0][2])}`,
+          `G_det  ${fmt(A[1][0])}   ${fmt(A[1][1])}   ${fmt(A[1][2])}`,
+          `B_det  ${fmt(A[2][0])}   ${fmt(A[2][1])}   ${fmt(A[2][2])}`,
+          '',
+          `diag: R=${fmt(A[0][0])} G=${fmt(A[1][1])} B=${fmt(A[2][2])}`,
         ];
         if (purityTable) purityTable.textContent = lines.join('\n');
-        if (purityHint) purityHint.textContent = 'heatmap fixed to [0,1], grayscale (black=1)';
+        if (purityHint) purityHint.textContent = 'ideal = identity (diagonal=1, off-diag=0)';
         drawPurityHeatmap(A);
       }
 
       async function loadSpectrum(step, idx){
         kpiSpec.textContent = `(step ${step}, k=${idx})`;
+        let rgb = null;
+        let frgb = null;
+        let fdtdStepUsed = null;
+        let C = 0;
+
+        // Track if any data actually loaded (to avoid flickering)
+        let dataLoaded = false;
+
+        // Determine which seed to use for spectrum (for merged topk)
+        let specSeedParam = '';
+        const isMerged = ui._lastMergedTopk && ui._lastMergedTopk.merged;
+        if (isMerged && ui._lastMergedTopk.seed_origins && ui._lastMergedTopk.seed_origins[idx] != null) {
+          const seed = ui._lastMergedTopk.seed_origins[idx];
+          specSeedParam = `&seed=${seed}`;
+        }
+
+        // 1) Try surrogate spectrum (optional)
         try{
-          const s = await fetchJSON(`/api/topk/${step}/${idx}/spectrum?mode=${encodeURIComponent(ui.topk_mode)}`);
-          const rgb = s.rgb || null;
-          if (!rgb) throw new Error('no rgb');
-          const C = rgb[0].length;
-          // Default wavelength grid: 400..700 nm, evenly spaced over C channels.
-          const wl = Array.from({length: C}, (_,i) => 400 + (300 * i) / Math.max(1, (C - 1)));
-          specChart.data.labels = wl.map(v => v.toFixed(0));
-          specChart.data.datasets[0].data = rgb[0];
-          specChart.data.datasets[1].data = rgb[1];
-          specChart.data.datasets[2].data = rgb[2];
-          // Hide FDTD datasets by default; show only if loaded.
-          specChart.data.datasets[3].hidden = true;
-          specChart.data.datasets[4].hidden = true;
-          specChart.data.datasets[5].hidden = true;
+          const specUrl = `/api/topk/${step}/${idx}/spectrum?mode=${encodeURIComponent(ui.topk_mode)}${specSeedParam}`;
+          console.log('Loading spectrum:', specUrl);
+          const s = await fetchJSON(specUrl);
+          console.log('Spectrum response:', s);
+          rgb = s.rgb || null;
+          if (rgb && rgb[0] && rgb[0].length) {
+            dataLoaded = true;
+            C = rgb[0].length;
+            // Only clear and update if data is actually available
+            specChart.data.datasets[0].data = toXY(rgb[0]);
+            specChart.data.datasets[1].data = toXY(rgb[1]);
+            specChart.data.datasets[2].data = toXY(rgb[2]);
+            specChart.data.datasets[0].hidden = false;
+            specChart.data.datasets[1].hidden = false;
+            specChart.data.datasets[2].hidden = false;
+          }
+        } catch(e) {
+          console.error('Spectrum load error:', e);
+          rgb = null;
+        }
 
-          if (ui.fdtd === 'on') {
-            try{
-              const f = await fetchJSON(`/api/topk/${step}/${idx}/fdtd_spectrum`);
-              if (f && f.rgb) {
-                const frgb = f.rgb;
-                specChart.data.datasets[3].data = frgb[0];
-                specChart.data.datasets[4].data = frgb[1];
-                specChart.data.datasets[5].data = frgb[2];
-                specChart.data.datasets[3].hidden = false;
-                specChart.data.datasets[4].hidden = false;
-                specChart.data.datasets[5].hidden = false;
-                specHint.textContent = `pred vs FDTD: 3x${C} (400-700 nm)`;
-              }
-            } catch(e) {
-              // no fdtd available
+        // 2) Try FDTD overlay independently (optional)
+        if (ui.fdtd === 'on') {
+          try{
+            const f = await fetchJSON(`/api/topk/${step}/${idx}/fdtd_spectrum?fallback=1${specSeedParam}`);
+            if (f && f.rgb && f.rgb[0] && f.rgb[0].length) {
+              dataLoaded = true;
+              frgb = f.rgb;
+              fdtdStepUsed = (f.fdtd_step != null) ? Number(f.fdtd_step) : Number(step);
+              C = Math.max(C, frgb[0].length);
+              // Display-only transform requested: negate FDTD overlay.
+              specChart.data.datasets[3].data = toXY(frgb[0].map(v => -Number(v)));
+              specChart.data.datasets[4].data = toXY(frgb[1].map(v => -Number(v)));
+              specChart.data.datasets[5].data = toXY(frgb[2].map(v => -Number(v)));
+              specChart.data.datasets[3].hidden = false;
+              specChart.data.datasets[4].hidden = false;
+              specChart.data.datasets[5].hidden = false;
             }
+          } catch(e) {
+            frgb = null;
           }
-          specChart.update();
-          if (specHint.textContent === 'click a thumbnail' || specHint.textContent === '') {
-            specHint.textContent = `forward model output: 3x${C} (400-700 nm)`;
-          }
+        }
 
+        // 3) Labels/update/hints - only update chart if data was actually loaded
+        specChart.data.labels = [];
+        if (dataLoaded) {
+          specChart.update();
+        }
+
+        if (rgb && frgb) {
+          if (fdtdStepUsed === Number(step)) specHint.textContent = `pred vs FDTD: 3x${C} (400-700 nm)`;
+          else specHint.textContent = `pred vs FDTD(step ${fdtdStepUsed}): 3x${C} (400-700 nm)`;
           const p = computePurityFromRgb(rgb);
           renderPurity(p, step, idx);
-        } catch(e) {
-          specHint.textContent = 'spectrum unavailable (surrogate not configured)';
-          renderPurity(null, step, idx);
+          return;
         }
+        if (rgb && !frgb) {
+          specHint.textContent = `forward only: 3x${C} (400-700 nm)`;
+          const p = computePurityFromRgb(rgb);
+          renderPurity(p, step, idx);
+          return;
+        }
+        if (!rgb && frgb) {
+          specHint.textContent = (fdtdStepUsed === Number(step))
+            ? `FDTD only: 3x${C} (400-700 nm)`
+            : `FDTD only(step ${fdtdStepUsed}): 3x${C} (400-700 nm)`;
+          renderPurity(null, step, idx);
+          return;
+        }
+        specHint.textContent = 'spectrum unavailable (no surrogate / no FDTD snapshot)';
+        renderPurity(null, step, idx);
       }
 
       thumbs.addEventListener('click', async (ev) => {
         const el = ev.target.closest('.thumb');
         if (!el) return;
-        const step = el.getAttribute('data-step');
-        const idx = el.getAttribute('data-idx');
-        if (step == null || idx == null) return;
-        ui.selected.step = Number(step);
-        ui.selected.idx = Number(idx);
+        const stepStr = el.getAttribute('data-step');
+        const idxStr = el.getAttribute('data-idx');
+        if (stepStr == null || idxStr == null) return;
+        const step = Number(stepStr);
+        const idx = Number(idxStr);
+        ui.selected.step = step;
+        ui.selected.idx = idx;
         Array.from(thumbs.querySelectorAll('.thumb')).forEach(x => x.classList.toggle('sel', x === el));
         await loadSpectrum(step, idx);
       });
@@ -1159,6 +1309,48 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
         });
       }
 
+      function toXY(arr){
+        if (!arr || !arr.length) return [];
+        const n = arr.length;
+        const out = new Array(n);
+        for (let i=0;i<n;i++){
+          const x = 400 + (300 * i) / Math.max(1, (n - 1));
+          out[i] = { x, y: Number(arr[i]) };
+        }
+        return out;
+      }
+
+      // Toggle parameter sections and multi-start field based on optimizer selection
+      function updateOptimizerSections() {
+        const inOptimizer = document.getElementById('inOptimizer');
+        const multiStartField = document.getElementById('multiStartField');
+        const gaParamsSection = document.getElementById('gaParamsSection');
+        const cmaesParamsSection = document.getElementById('cmaesParamsSection');
+
+        if (!inOptimizer) return;
+
+        const optValue = inOptimizer.value;
+
+        // Show/hide parameter sections based on optimizer
+        if (gaParamsSection) {
+          gaParamsSection.style.display = (optValue === 'ga' || optValue === 'cmaes-multi') ? 'block' : 'none';
+        }
+        if (cmaesParamsSection) {
+          cmaesParamsSection.style.display = (optValue === 'cmaes' || optValue === 'cmaes-multi') ? 'block' : 'none';
+        }
+
+        // Show multi-start field for all optimizers
+        if (multiStartField) {
+          multiStartField.style.display = 'block';
+        }
+      }
+
+      const inOptimizer = document.getElementById('inOptimizer');
+      if (inOptimizer) {
+        inOptimizer.addEventListener('change', updateOptimizerSections);
+        updateOptimizerSections(); // Initial state
+      }
+
       const dryRunToggle = document.getElementById('dryRunToggle');
       if (dryRunToggle) {
         dryRunToggle.checked = (ui.dryrun === 'on');
@@ -1174,20 +1366,30 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
           const nSteps = Number(document.getElementById('inNSteps')?.value || 2000);
           const topk = Number(document.getElementById('inTopk')?.value || 50);
           const dev = String(document.getElementById('inDevice')?.value || 'cpu');
+          const optType_raw = String(document.getElementById('inOptimizer')?.value || 'ga');
+          // Support both explicit 'cmaes-multi' and general multi-start for any optimizer
+          const optType = (optType_raw === 'cmaes-multi') ? 'cmaes' : optType_raw;
+          const numRuns = Number(document.getElementById('inNumRuns')?.value || 1);
+          const isMultiStart = numRuns > 1 || optType_raw === 'cmaes-multi';
           const genBackend = String(document.getElementById('inGenBackend')?.value || 'rule_mfs');
-          const chunk = Number(document.getElementById('inChunk')?.value || 64);
+          const chunk = Number(document.getElementById('inChunk')?.value || 32);
           const fdtdEvery = Number(document.getElementById('inFdtdEvery')?.value || 10);
+          const cmaSigma0 = Number(document.getElementById('inCmaSigma0')?.value || 0.3);
           const wPurity = Number(document.getElementById('inWPurity')?.value || 1.0);
           const wAbs = Number(document.getElementById('inWAbs')?.value || 0.0);
           const wFill = Number(document.getElementById('inWFill')?.value || 1.0);
           const fillMin = Number(document.getElementById('inFillMin')?.value || 0.2);
           const fillMax = Number(document.getElementById('inFillMax')?.value || 0.5);
+          const purityDistW = Number(document.getElementById('inPurityDistW')?.value || 0);
           const mutP = Number(document.getElementById('inMutP')?.value || 0.2);
           const mutSig = Number(document.getElementById('inMutSig')?.value || 0.15);
           const cloneK = Number(document.getElementById('inCloneK')?.value || 0);
           const cloneM = Number(document.getElementById('inCloneM')?.value || 0);
           const cloneSigMin = Number(document.getElementById('inCloneSigMin')?.value || 0.02);
           const cloneSigMax = Number(document.getElementById('inCloneSigMax')?.value || 0.08);
+          const rgbWR = Number(document.getElementById('inWR')?.value || 1.0);
+          const rgbWG = Number(document.getElementById('inWG')?.value || 2.0);
+          const rgbWB = Number(document.getElementById('inWB')?.value || 1.0);
 
           // persist
           localStorage.setItem('loss_w_purity', String(wPurity));
@@ -1195,23 +1397,52 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
           localStorage.setItem('loss_w_fill', String(wFill));
           localStorage.setItem('loss_fill_min', String(fillMin));
           localStorage.setItem('loss_fill_max', String(fillMax));
+          localStorage.setItem('loss_purity_dist_w', String(purityDistW));
           localStorage.setItem('ga_mut_p', String(mutP));
           localStorage.setItem('ga_mut_sig', String(mutSig));
           localStorage.setItem('ga_clone_k', String(cloneK));
           localStorage.setItem('ga_clone_m', String(cloneM));
           localStorage.setItem('ga_clone_sig_min', String(cloneSigMin));
           localStorage.setItem('ga_clone_sig_max', String(cloneSigMax));
+          localStorage.setItem('optimizer_type', optType);
+          localStorage.setItem('cma_sigma0', String(cmaSigma0));
+          localStorage.setItem('rgb_w_r', String(rgbWR));
+          localStorage.setItem('rgb_w_g', String(rgbWG));
+          localStorage.setItem('rgb_w_b', String(rgbWB));
           try{
             const dryRun = (ui.dryrun === 'on') ? 1 : 0;
-            const url = `/api/run/start?n_start=${encodeURIComponent(nStart)}&n_steps=${encodeURIComponent(nSteps)}&topk=${encodeURIComponent(topk)}&dry_run=${encodeURIComponent(dryRun)}&device=${encodeURIComponent(dev)}&chunk_size=${encodeURIComponent(chunk)}&fdtd_verify=${ui.fdtd==='on'?1:0}&fdtd_every=${encodeURIComponent(fdtdEvery)}&ga_mutation_p=${encodeURIComponent(mutP)}&ga_mutation_sigma=${encodeURIComponent(mutSig)}&w_purity=${encodeURIComponent(wPurity)}&w_abs=${encodeURIComponent(wAbs)}&w_fill=${encodeURIComponent(wFill)}&fill_min=${encodeURIComponent(fillMin)}&fill_max=${encodeURIComponent(fillMax)}`;
-            const url2 = url + `&generator_backend=${encodeURIComponent(genBackend)}&ga_topk_clone_k=${encodeURIComponent(cloneK)}&ga_topk_clone_m=${encodeURIComponent(cloneM)}&ga_topk_clone_sigma_min=${encodeURIComponent(cloneSigMin)}&ga_topk_clone_sigma_max=${encodeURIComponent(cloneSigMax)}`;
-            const r = await fetch(url2, {method:'POST'});
-            const bodyText = await r.text();
-            if (!r.ok) {
-              setRunStatus(`failed to start (${r.status}): ${bodyText || 'no details'}`);
-              return;
+            const baseUrl = `/api/run/start?n_start=${encodeURIComponent(nStart)}&n_steps=${encodeURIComponent(nSteps)}&topk=${encodeURIComponent(topk)}&dry_run=${encodeURIComponent(dryRun)}&device=${encodeURIComponent(dev)}&chunk_size=${encodeURIComponent(chunk)}&fdtd_verify=${ui.fdtd==='on'?1:0}&fdtd_every=${encodeURIComponent(fdtdEvery)}&ga_mutation_p=${encodeURIComponent(mutP)}&ga_mutation_sigma=${encodeURIComponent(mutSig)}&w_purity=${encodeURIComponent(wPurity)}&w_abs=${encodeURIComponent(wAbs)}&w_fill=${encodeURIComponent(wFill)}&fill_min=${encodeURIComponent(fillMin)}&fill_max=${encodeURIComponent(fillMax)}&purity_dist_w=${encodeURIComponent(purityDistW)}`;
+            const urlSuffix = `&generator_backend=${encodeURIComponent(genBackend)}&ga_topk_clone_k=${encodeURIComponent(cloneK)}&ga_topk_clone_m=${encodeURIComponent(cloneM)}&ga_topk_clone_sigma_min=${encodeURIComponent(cloneSigMin)}&ga_topk_clone_sigma_max=${encodeURIComponent(cloneSigMax)}&optimizer_type=${encodeURIComponent(optType)}&cma_sigma0=${encodeURIComponent(cmaSigma0)}&rgb_weight_r=${encodeURIComponent(rgbWR)}&rgb_weight_g=${encodeURIComponent(rgbWG)}&rgb_weight_b=${encodeURIComponent(rgbWB)}`;
+
+            // Multi-start: launch numRuns independent runs with different seeds
+            const launched = [];
+            const actualNumRuns = isMultiStart ? Math.max(2, numRuns) : 1;
+
+            for (let runIdx = 0; runIdx < actualNumRuns; runIdx++) {
+              const seedParam = isMultiStart ? `&seed=${runIdx * 1000}` : '';
+              const url2 = baseUrl + urlSuffix + seedParam;
+              const r = await fetch(url2, {method:'POST'});
+              if (r.ok) {
+                launched.push(runIdx);
+              }
             }
-            setRunStatus('started');
+
+            if (launched.length > 0) {
+              // Clear caches for new run
+              ui.lastTopkKey = '';
+              ui._lastMergedTopk = null;
+              thumbs.innerHTML = '';
+              topkHint.textContent = '';
+              console.log('New run started - caches cleared');
+              if (actualNumRuns === 1) {
+                setRunStatus('started');
+              } else {
+                const seeds = launched.map(i => i * 1000).join(', ');
+                setRunStatus(`started ${launched.length} parallel runs (seeds: ${seeds})`);
+              }
+            } else {
+              setRunStatus('failed to start any runs');
+            }
           } catch(e) {
             setRunStatus('failed to start (network error)');
           }
@@ -1221,10 +1452,15 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
       if (stopBtn) {
         stopBtn.addEventListener('click', async () => {
           try{
+            // Stop all seeds (no seed param = stop all)
             const r = await fetch('/api/run/stop', {method:'POST'});
             if (!r.ok) throw new Error(String(r.status));
             const j = await r.json();
-            setRunStatus(j.stopped ? 'stopped' : (j.error || 'no run'));
+            if (j.stopped_seeds && j.stopped_seeds.length > 0) {
+              setRunStatus(`stopped seeds: ${j.stopped_seeds.join(', ')}`);
+            } else {
+              setRunStatus(j.stopped ? 'stopped' : (j.error || 'no run'));
+            }
           } catch(e) {
             setRunStatus('stop failed');
           }
@@ -1244,6 +1480,49 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
             setRunStatus('reset ok');
           } catch(e) {
             setRunStatus('reset failed');
+          }
+        });
+      }
+      const resumeBtn = document.getElementById('resumeBtn');
+      if (resumeBtn) {
+        resumeBtn.addEventListener('click', async () => {
+          const nStart = Number(document.getElementById('inNStart')?.value || 200);
+          const nSteps = Number(document.getElementById('inNSteps')?.value || 2000);
+          const topk = Number(document.getElementById('inTopk')?.value || 50);
+          const dev = String(document.getElementById('inDevice')?.value || 'cpu');
+          const optType = String(document.getElementById('inOptimizer')?.value || 'ga');
+          const genBackend = String(document.getElementById('inGenBackend')?.value || 'rule_mfs');
+          const chunk = Number(document.getElementById('inChunk')?.value || 32);
+          const fdtdEvery = Number(document.getElementById('inFdtdEvery')?.value || 10);
+          const cmaSigma0 = Number(document.getElementById('inCmaSigma0')?.value || 0.3);
+          const wPurity = Number(document.getElementById('inWPurity')?.value || 1.0);
+          const wAbs = Number(document.getElementById('inWAbs')?.value || 0.0);
+          const wFill = Number(document.getElementById('inWFill')?.value || 1.0);
+          const fillMin = Number(document.getElementById('inFillMin')?.value || 0.2);
+          const fillMax = Number(document.getElementById('inFillMax')?.value || 0.5);
+          const purityDistW = Number(document.getElementById('inPurityDistW')?.value || 0);
+          const mutP = Number(document.getElementById('inMutP')?.value || 0.2);
+          const mutSig = Number(document.getElementById('inMutSig')?.value || 0.15);
+          const cloneK = Number(document.getElementById('inCloneK')?.value || 0);
+          const cloneM = Number(document.getElementById('inCloneM')?.value || 0);
+          const cloneSigMin = Number(document.getElementById('inCloneSigMin')?.value || 0.02);
+          const cloneSigMax = Number(document.getElementById('inCloneSigMax')?.value || 0.08);
+          const rgbWR = Number(document.getElementById('inWR')?.value || 1.0);
+          const rgbWG = Number(document.getElementById('inWG')?.value || 2.0);
+          const rgbWB = Number(document.getElementById('inWB')?.value || 1.0);
+          try{
+            const dryRun = (ui.dryrun === 'on') ? 1 : 0;
+            const url = `/api/run/start?n_start=${encodeURIComponent(nStart)}&n_steps=${encodeURIComponent(nSteps)}&topk=${encodeURIComponent(topk)}&dry_run=${encodeURIComponent(dryRun)}&device=${encodeURIComponent(dev)}&chunk_size=${encodeURIComponent(chunk)}&fdtd_verify=${ui.fdtd==='on'?1:0}&fdtd_every=${encodeURIComponent(fdtdEvery)}&ga_mutation_p=${encodeURIComponent(mutP)}&ga_mutation_sigma=${encodeURIComponent(mutSig)}&w_purity=${encodeURIComponent(wPurity)}&w_abs=${encodeURIComponent(wAbs)}&w_fill=${encodeURIComponent(wFill)}&fill_min=${encodeURIComponent(fillMin)}&fill_max=${encodeURIComponent(fillMax)}&purity_dist_w=${encodeURIComponent(purityDistW)}`;
+            const url2 = url + `&generator_backend=${encodeURIComponent(genBackend)}&ga_topk_clone_k=${encodeURIComponent(cloneK)}&ga_topk_clone_m=${encodeURIComponent(cloneM)}&ga_topk_clone_sigma_min=${encodeURIComponent(cloneSigMin)}&ga_topk_clone_sigma_max=${encodeURIComponent(cloneSigMax)}&optimizer_type=${encodeURIComponent(optType)}&cma_sigma0=${encodeURIComponent(cmaSigma0)}&rgb_weight_r=${encodeURIComponent(rgbWR)}&rgb_weight_g=${encodeURIComponent(rgbWG)}&rgb_weight_b=${encodeURIComponent(rgbWB)}&resume=1`;
+            const r = await fetch(url2, {method:'POST'});
+            const bodyText = await r.text();
+            if (!r.ok) {
+              setRunStatus(`failed to resume (${r.status}): ${bodyText || 'no details'}`);
+              return;
+            }
+            setRunStatus('resumed');
+          } catch(e) {
+            setRunStatus('failed to resume (network error)');
           }
         });
       }
@@ -1278,6 +1557,13 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
           if (v != null && v !== '') el.value = v;
           else el.value = String(fallback);
         };
+        // optimizer type
+        const ot = localStorage.getItem('optimizer_type');
+        const otEl = document.getElementById('inOptimizer');
+        if (otEl) {
+          otEl.value = (ot === 'cmaes' || ot === 'cmaes-multi') ? ot : 'ga';
+          otEl.addEventListener('change', () => localStorage.setItem('optimizer_type', otEl.value));
+        }
         // generator backend
         const gb = localStorage.getItem('gen_backend');
         const gbEl = document.getElementById('inGenBackend');
@@ -1290,14 +1576,21 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
         set('inWFill', 'loss_w_fill', 1.0);
         set('inFillMin', 'loss_fill_min', 0.2);
         set('inFillMax', 'loss_fill_max', 0.5);
+        set('inPurityDistW', 'loss_purity_dist_w', 0);
         set('inMutP', 'ga_mut_p', 0.2);
         set('inMutSig', 'ga_mut_sig', 0.15);
         set('inCloneK', 'ga_clone_k', 8);
         set('inCloneM', 'ga_clone_m', 0);
         set('inCloneSigMin', 'ga_clone_sig_min', 0.02);
         set('inCloneSigMax', 'ga_clone_sig_max', 0.08);
+        set('inCmaSigma0', 'cma_sigma0', 0.3);
+        set('inWR', 'rgb_w_r', 1.0);
+        set('inWG', 'rgb_w_g', 2.0);
+        set('inWB', 'rgb_w_b', 1.0);
       }
       restoreLossInputs();
+      // Ensure parameter section visibility is correct after restore
+      updateOptimizerSections();
     </script>
   </body>
 </html>

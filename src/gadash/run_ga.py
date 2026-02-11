@@ -4,7 +4,6 @@ import argparse
 from pathlib import Path
 
 from gadash.config import load_config
-from gadash.ga_opt import run_ga
 
 
 def main() -> int:
@@ -18,13 +17,13 @@ def main() -> int:
     p.add_argument("--fdtd-every", type=int, default=0, help="If >0, verify topk every N generations (non-blocking).")
     p.add_argument("--fdtd-k", type=int, default=None, help="How many topk items to verify (default: all in snapshot).")
     p.add_argument("--fdtd-config", default="configs/fdtd.yaml")
+    p.add_argument("--resume", action="store_true", help="Resume optimization from the last checkpoint.")
     args = p.parse_args()
 
     cfg = load_config(args.config, args.paths)
     Path(args.progress_dir).mkdir(parents=True, exist_ok=True)
 
-    out = run_ga(
-        cfg,
+    run_kwargs = dict(
         progress_dir=args.progress_dir,
         device=args.device,
         dry_run=args.dry_run,
@@ -33,8 +32,19 @@ def main() -> int:
         fdtd_k=(int(args.fdtd_k) if args.fdtd_k is not None else None),
         fdtd_config=args.fdtd_config,
         paths_yaml=args.paths,
+        resume=args.resume,
     )
-    print(f"[OK] ga done: progress_dir={out['progress_dir']} gens={out['gens']}")
+
+    optimizer_type = str(cfg.ga.optimizer_type).lower()
+
+    if optimizer_type == "cmaes":
+        from gadash.cma_opt import run_cmaes
+        out = run_cmaes(cfg, **run_kwargs)
+        print(f"[OK] cmaes done: progress_dir={out['progress_dir']} gens={out['gens']}")
+    else:
+        from gadash.ga_opt import run_ga
+        out = run_ga(cfg, **run_kwargs)
+        print(f"[OK] ga done: progress_dir={out['progress_dir']} gens={out['gens']}")
     return 0
 
 

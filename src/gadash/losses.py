@@ -22,7 +22,20 @@ def loss_from_pred(
     A = purity_matrix(pred_rgbc, rgb_weights=rgb_weights)  # (B,3,3)
 
     I = torch.eye(3, device=A.device, dtype=A.dtype).unsqueeze(0)
-    loss_purity = ((A - I) ** 2).sum(dim=(1, 2))
+
+    # Spectral-distance weight matrix: W[i,j] = 1 + d * |i - j|
+    # d=0 → uniform (backward compatible), d>0 → spectrally distant contamination penalized more
+    d = float(loss_cfg.purity_dist_w)
+    if d != 0.0:
+        W = torch.tensor(
+            [[1.0, 1.0 + d, 1.0 + 2.0 * d],
+             [1.0 + d, 1.0, 1.0 + d],
+             [1.0 + 2.0 * d, 1.0 + d, 1.0]],
+            device=A.device, dtype=A.dtype,
+        ).unsqueeze(0)
+        loss_purity = (W * (A - I) ** 2).sum(dim=(1, 2))
+    else:
+        loss_purity = ((A - I) ** 2).sum(dim=(1, 2))
 
     diagA = torch.diagonal(A, dim1=1, dim2=2)  # (B,3)
     loss_abs = ((1.0 - diagA) ** 2).sum(dim=1)

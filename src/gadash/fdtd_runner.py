@@ -77,12 +77,14 @@ def run_fdtd_batch(
                         marker.commit()
                         done.append(structure_id)
                         break
-                    except Exception:
+                    except Exception as e:
                         retries += 1
                         if retries > int(options.max_retries):
-                            break
+                            raise RuntimeError(
+                                f"fdtd item failed: id={int(structure_id)} cell={cell_name} "
+                                f"gds={gds_path} retries={int(options.max_retries)} err={e}"
+                            ) from e
         finally:
             bridge.close()
 
     return done
-

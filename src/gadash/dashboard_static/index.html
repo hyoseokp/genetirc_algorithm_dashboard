@@ -1180,10 +1180,14 @@ L_{\\mathrm{abs}}=\\lVert \\mathbf{1}-\\mathrm{diag}(A)\\rVert_2^2.\\\\
             const url = `/api/run/start?n_start=${encodeURIComponent(nStart)}&n_steps=${encodeURIComponent(nSteps)}&topk=${encodeURIComponent(topk)}&dry_run=${encodeURIComponent(dryRun)}&device=${encodeURIComponent(dev)}&chunk_size=${encodeURIComponent(chunk)}&fdtd_verify=${ui.fdtd==='on'?1:0}&fdtd_every=${encodeURIComponent(fdtdEvery)}&ga_mutation_p=${encodeURIComponent(mutP)}&ga_mutation_sigma=${encodeURIComponent(mutSig)}&w_purity=${encodeURIComponent(wPurity)}&w_abs=${encodeURIComponent(wAbs)}&w_fill=${encodeURIComponent(wFill)}&fill_min=${encodeURIComponent(fillMin)}&fill_max=${encodeURIComponent(fillMax)}`;
             const url2 = url + `&generator_backend=${encodeURIComponent(genBackend)}&ga_topk_clone_k=${encodeURIComponent(cloneK)}&ga_topk_clone_m=${encodeURIComponent(cloneM)}&ga_topk_clone_sigma_min=${encodeURIComponent(cloneSigMin)}&ga_topk_clone_sigma_max=${encodeURIComponent(cloneSigMax)}`;
             const r = await fetch(url2, {method:'POST'});
-            if (!r.ok) throw new Error(String(r.status));
+            const bodyText = await r.text();
+            if (!r.ok) {
+              setRunStatus(`failed to start (${r.status}): ${bodyText || 'no details'}`);
+              return;
+            }
             setRunStatus('started');
           } catch(e) {
-            setRunStatus('failed to start');
+            setRunStatus('failed to start (network error)');
           }
         });
       }

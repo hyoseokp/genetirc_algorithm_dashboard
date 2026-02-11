@@ -11,21 +11,9 @@ class RuleMFSGenerator:
         self.design = design
         self.gen = gen
 
-    def __call__(self, seed: torch.Tensor) -> torch.Tensor:
-        """seed: (B,1,16,16) arbitrary -> internally normalized to [0,1]."""
-        x = seed
-        # Normalize seed into [0,1] for robustness:
-        # - If the caller passes logits / unconstrained values, squash with sigmoid.
-        # - If already in-range, just clamp (avoid distorting uniform[0,1] seeds).
-        try:
-            x_min = float(x.min().detach().cpu().item())
-            x_max = float(x.max().detach().cpu().item())
-        except Exception:
-            x_min, x_max = -1.0, 2.0
-        if x_min < 0.0 or x_max > 1.0:
-            x = torch.sigmoid(x)
-        else:
-            x = x.clamp(0.0, 1.0)
+    def __call__(self, seed01: torch.Tensor) -> torch.Tensor:
+        """seed01: (B,1,16,16) expected in [0,1] -> struct01: (B,1,128,128) in [0,1]."""
+        x = seed01
         if self.design.enforce_symmetry:
             x = enforce_diag_symmetry(x)
 
@@ -99,10 +87,22 @@ class RuleMFSSciPyGenerator:
         return img
 
     def __call__(self, seed01: torch.Tensor) -> torch.Tensor:
-        """seed01: (B,1,16,16) in [0,1] -> struct01: (B,1,128,128) in {0,1} (float32)."""
+        """seed: (B,1,16,16) arbitrary -> internally normalized to [0,1] -> struct01: (B,1,128,128) in {0,1} (float32)."""
         import numpy as np
 
         x = seed01
+        # Normalize seed into [0,1] for robustness (match dataset-style raw inputs).
+        # - If the caller passes logits / unconstrained values, squash with sigmoid.
+        # - If already in-range, just clamp (avoid distorting uniform[0,1] seeds).
+        try:
+            x_min = float(x.min().detach().cpu().item())
+            x_max = float(x.max().detach().cpu().item())
+        except Exception:
+            x_min, x_max = -1.0, 2.0
+        if x_min < 0.0 or x_max > 1.0:
+            x = torch.sigmoid(x)
+        else:
+            x = x.clamp(0.0, 1.0)
         if self.design.enforce_symmetry:
             x = enforce_diag_symmetry(x)
 

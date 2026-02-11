@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,10 @@ def resolve_fdtd_cfg(*, fdtd_yaml: str | Path, paths_yaml: str | Path) -> FDTDRu
         lumerical_root = str(paths.get("lumerical_root", "") or "")
     if not template_fsp.strip():
         template_fsp = str(paths.get("fdtd_template_fsp", "") or "")
+
+    # Expand env vars/user home so ${USERPROFILE}/... works in YAML.
+    lumerical_root = str(Path(os.path.expandvars(os.path.expanduser(lumerical_root))))
+    template_fsp = str(Path(os.path.expandvars(os.path.expanduser(template_fsp))))
 
     if not lumerical_root.strip():
         raise ValueError("FDTD lumerical_root not set (configs/fdtd.yaml or configs/paths.yaml)")

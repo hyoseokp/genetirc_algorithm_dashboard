@@ -684,21 +684,34 @@
         const gridColor = '#e2e8f0';
         const tickColor = '#94a3b8';
         const fontFamily = '-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif';
+        // Define colors for each loss component
+        const lossColors = {
+          'loss_total': { border: '#1f2937', bg: 'rgba(31,41,55,0.1)' },      // Dark (bold)
+          'loss_spec': { border: '#3b82f6', bg: 'rgba(59,130,246,0.08)' },    // Blue
+          'loss_reg': { border: '#8b5cf6', bg: 'rgba(139,92,246,0.08)' },     // Purple
+          'loss_purity': { border: '#ef4444', bg: 'rgba(239,68,68,0.08)' },   // Red
+          'loss_fill': { border: '#f59e0b', bg: 'rgba(245,158,11,0.08)' }     // Orange
+        };
+
+        const datasets = [];
+        for (const [loss_key, colors] of Object.entries(lossColors)) {
+          datasets.push({
+            label: loss_key,
+            data: [],
+            borderColor: colors.border,
+            backgroundColor: colors.bg,
+            fill: (loss_key === 'loss_total'),  // Only fill total loss
+            borderWidth: (loss_key === 'loss_total') ? 2.5 : 1.5,
+            tension: 0.4,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            hidden: (loss_key !== 'loss_total' && loss_key !== 'loss_spec')  // Hide others by default
+          });
+        }
+
         lossChart = new Chart(ctx, {
           type: 'line',
-          data: { labels: [], datasets: [
-            {
-              label: 'loss_total',
-              data: [],
-              borderColor: '#3b82f6',
-              backgroundColor: 'rgba(59,130,246,0.08)',
-              fill: true,
-              borderWidth: 2,
-              tension: 0.4,
-              pointRadius: 0,
-              pointHoverRadius: 4
-            },
-          ]},
+          data: { labels: [], datasets: datasets },
           options: {
             responsive: true,
             maintainAspectRatio: false,
@@ -842,11 +855,23 @@
         if (windowN && steps.length > windowN) startIdx = steps.length - windowN;
 
         const x = steps.slice(startIdx);
-        const yTotal = (series.loss_total || []).slice(startIdx);
+
+        // Extract all loss components
+        const lossKeys = ['loss_total', 'loss_spec', 'loss_reg', 'loss_purity', 'loss_fill'];
+        const lossData = {};
+        for (const key of lossKeys) {
+          lossData[key] = (series[key] || []).slice(startIdx);
+        }
 
         updateLossScale();
         lossChart.data.labels = x.map(String);
-        lossChart.data.datasets[0].data = yTotal;
+
+        // Update all loss datasets
+        for (let i = 0; i < lossChart.data.datasets.length; i++) {
+          const label = lossChart.data.datasets[i].label;
+          lossChart.data.datasets[i].data = lossData[label] || [];
+        }
+
         lossChart.update();
 
         renderLatexFromMeta(meta);

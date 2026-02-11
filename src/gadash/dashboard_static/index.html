@@ -383,9 +383,10 @@
               <option value="rule_mfs_scipy">rule_mfs_scipy (exact)</option>
             </select>
           </div>
-          <div class="field" id="multiStartField" style="display:none;">
-            <label for="inNumRuns">num_runs</label>
-            <input id="inNumRuns" type="number" min="2" max="10" step="1" value="3" />
+          <div class="field">
+            <label for="inNumRuns">Number of parallel runs</label>
+            <input id="inNumRuns" type="number" min="1" max="20" step="1" value="1" />
+            <small style="color:#666; margin-top:4px; display:block;">1=single run, 2+=multi-start with seeds: 0, 1000, 2000, ...</small>
           </div>
           <div class="field">
             <label for="inNStart">n_start</label>
@@ -1320,10 +1321,9 @@
         return out;
       }
 
-      // Toggle parameter sections and multi-start field based on optimizer selection
+      // Toggle parameter sections based on optimizer selection
       function updateOptimizerSections() {
         const inOptimizer = document.getElementById('inOptimizer');
-        const multiStartField = document.getElementById('multiStartField');
         const gaParamsSection = document.getElementById('gaParamsSection');
         const cmaesParamsSection = document.getElementById('cmaesParamsSection');
 
@@ -1337,11 +1337,6 @@
         }
         if (cmaesParamsSection) {
           cmaesParamsSection.style.display = (optValue === 'cmaes' || optValue === 'cmaes-multi') ? 'block' : 'none';
-        }
-
-        // Show multi-start field for all optimizers
-        if (multiStartField) {
-          multiStartField.style.display = 'block';
         }
       }
 

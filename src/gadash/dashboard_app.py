@@ -405,6 +405,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         generator_backend: str | None = Query(default=None),
         fdtd_verify: int = Query(default=0, ge=0, le=1),
         fdtd_every: int = Query(default=10, ge=0, le=100000),
+        fdtd_k: int | None = Query(default=1, ge=1),
         ga_mutation_p: float | None = Query(default=None),
         ga_mutation_sigma: float | None = Query(default=None),
         ga_topk_clone_k: int | None = Query(default=None, ge=0),
@@ -488,6 +489,16 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         ]
         if int(dry_run) == 1:
             cmd.append("--dry-run")
+        cmd += [
+            "--fdtd-verify",
+            "on" if int(fdtd_verify) == 1 else "off",
+            "--fdtd-config",
+            str(Path(__file__).resolve().parents[2] / "configs" / "fdtd.yaml"),
+        ]
+        if int(fdtd_verify) == 1 and int(fdtd_every) > 0:
+            cmd += ["--fdtd-every", str(int(fdtd_every))]
+        if int(fdtd_verify) == 1 and fdtd_k is not None:
+            cmd += ["--fdtd-k", str(int(fdtd_k))]
         rstate.lines.clear()
         rstate.started_ts = datetime.now(timezone.utc).isoformat()
         rstate.last_exit_code = None

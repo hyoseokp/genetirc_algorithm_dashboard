@@ -1,11 +1,15 @@
 ﻿from __future__ import annotations
 
 from dataclasses import asdict
+import json
+import os
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
+import threading
+import shutil
 
 from .config import AppConfig
 from .generator import build_generator
@@ -13,6 +17,7 @@ from .losses import loss_from_pred
 from .progress_logger import ProgressLogger
 from .spectral import merge_rggb_to_rgb
 from .surrogate_interface import CRReconSurrogate, MockSurrogate
+from .fdtd_verify import resolve_fdtd_cfg, verify_topk_with_fdtd
 
 
 def _torch_device(device: str) -> torch.device:
@@ -68,6 +73,11 @@ def run_ga(
     progress_dir: str | Path,
     device: str = "cpu",
     dry_run: bool = False,
+    fdtd_verify: bool = False,
+    fdtd_every: int = 0,
+    fdtd_k: int | None = None,
+    fdtd_config: str | Path = "configs/fdtd.yaml",
+    paths_yaml: str | Path = "configs/paths.yaml",
 ) -> dict[str, Any]:
     dev = _torch_device(device)
 
@@ -165,6 +175,88 @@ def run_ga(
     if dry_run:
         gens = 2  # still evolve; dry-run only swaps surrogate to MockSurrogate
 
+    # Optional periodic FDTD verification scheduler.
+    do_fdtd = bool(fdtd_verify) and (not dry_run)
+    every = int(fdtd_every or 0)
+    if every < 0:
+        raise ValueError("fdtd_every must be >= 0")
+
+    fdtd_cfg = None
+    if do_fdtd:
+        try:
+            fdtd_cfg = resolve_fdtd_cfg(fdtd_yaml=fdtd_config, paths_yaml=paths_yaml)
+        except Exception as e:
+            print(f"[WARN] FDTD config not ready; disabling FDTD verify: {e}", flush=True)
+            do_fdtd = False
+
+    class _FDTDScheduler:
+        def __init__(self):
+            self.lock = threading.Lock()
+            self.thread: threading.Thread | None = None
+            self.pending: tuple[int, str] | None = None
+            self.verified: set[int] = set()
+
+        def request(self, *, step: int, topk_npz: str) -> None:
+            with self.lock:
+                if int(step) in self.verified:
+                    return
+                self.pending = (int(step), str(topk_npz))
+                self._maybe_start_locked()
+
+        def _maybe_start_locked(self) -> None:
+            if self.thread is not None and self.thread.is_alive():
+                return
+            if self.pending is None:
+                return
+            step, topk_npz = self.pending
+            self.pending = None
+
+            def _worker() -> None:
+                try:
+                    assert fdtd_cfg is not None
+                    v = verify_topk_with_fdtd(
+                        topk_npz=topk_npz,
+                        fdtd_cfg=fdtd_cfg,
+                        out_dir=os.environ.get("GADASH_FDTD_OUT", r"C:\gadash_fdtd_results"),
+                        k=fdtd_k,
+                    )
+                    pdir = Path(progress_dir)
+                    pdir.mkdir(parents=True, exist_ok=True)
+                    dst = pdir / f"fdtd_rggb_step-{int(step)}.npy"
+                    shutil.copyfile(v.fdtd_rggb_path, dst)
+                    meta = {
+                        "step": int(step),
+                        "k": int(fdtd_k) if fdtd_k is not None else None,
+                        "out_dir": str(v.out_dir),
+                    }
+                    (pdir / "fdtd_meta.json").write_text(
+                        json.dumps(meta, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
+                    )
+                    print(f"[OK] fdtd-verify saved: {dst}", flush=True)
+                    with self.lock:
+                        self.verified.add(int(step))
+                except Exception as e:
+                    print(f"[WARN] fdtd-verify failed (step={step}): {e}", flush=True)
+                finally:
+                    with self.lock:
+                        self.thread = None
+                        self._maybe_start_locked()
+
+            self.thread = threading.Thread(target=_worker, daemon=False)
+            self.thread.start()
+
+        def drain(self) -> None:
+            while True:
+                with self.lock:
+                    th = self.thread
+                    pending = self.pending
+                if th is None and pending is None:
+                    return
+                if th is not None:
+                    th.join(timeout=0.5)
+
+    fdtd_sched = _FDTDScheduler() if (do_fdtd and every > 0 and fdtd_cfg is not None) else None
+
     for gidx in range(gens):
         ev = eval_losses(pop)
         loss_total = ev["loss_total"]
@@ -205,7 +297,8 @@ def run_ga(
         # best-so-far topk
         assert best_araw is not None and best_loss_vec is not None
         seed01_best, struct01_best = _struct_for(best_araw[:topk])
-        _pack(seed01_best, struct01_best, "best_loss", best_loss_vec[:topk], progress_dir_p / f"topk_step-{gidx}.npz")
+        best_npz = progress_dir_p / f"topk_step-{gidx}.npz"
+        _pack(seed01_best, struct01_best, "best_loss", best_loss_vec[:topk], best_npz)
 
         # metrics
         m = {
@@ -224,6 +317,15 @@ def run_ga(
             print(
                 f"[GEN {gidx}/{gens-1}] loss_mean={m['loss_total']:.4f} fill={m['fill']:.3f}"
             )
+
+        # Periodic FDTD verification (non-blocking).
+        if fdtd_sched is not None:
+            if (gidx % every == 0) or (gidx == gens - 1):
+                try:
+                    if best_npz.exists():
+                        fdtd_sched.request(step=int(gidx), topk_npz=str(best_npz))
+                except Exception:
+                    pass
 
         # build next generation
         N = int(cfg.ga.population)
@@ -279,5 +381,8 @@ def run_ga(
             child = torch.empty((0,) + keep.shape[1:], device=dev)
 
         pop = torch.cat([keep, clones, child], dim=0)[:N]
+
+    if fdtd_sched is not None:
+        fdtd_sched.drain()
 
     return {"progress_dir": str(progress_dir), "gens": gens}

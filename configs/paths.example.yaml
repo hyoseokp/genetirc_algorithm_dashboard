@@ -1,3 +1,7 @@
 ﻿forward_model_root: ${USERPROFILE}/data_CR_dashboard_toggles_nosmudge/code/CR_recon
 forward_config_yaml: ${USERPROFILE}/data_CR_dashboard_toggles_nosmudge/code/CR_recon/configs/default.yaml
 forward_checkpoint: ${USERPROFILE}/checkpoints/cnn_xattn_epoch_0499.pt
+
+# Optional: Lumerical FDTD verification
+lumerical_root: "C:/Program Files/Lumerical/v202"
+fdtd_template_fsp: ${USERPROFILE}/air_SiN_2um_NA.fsp

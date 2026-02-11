@@ -1254,7 +1254,6 @@
       }
 
       async function loadSpectrum(step, idx){
-        kpiSpec.textContent = `(step ${step}, k=${idx})`;
         let rgb = null;
         let frgb = null;
         let fdtdStepUsed = null;
@@ -1265,11 +1264,14 @@
 
         // Determine which seed to use for spectrum (for merged topk)
         let specSeedParam = '';
+        let seedLabel = '';
         const isMerged = ui._lastMergedTopk && ui._lastMergedTopk.merged;
         if (isMerged && ui._lastMergedTopk.seed_origins && ui._lastMergedTopk.seed_origins[idx] != null) {
           const seed = ui._lastMergedTopk.seed_origins[idx];
           specSeedParam = `&seed=${seed}`;
+          seedLabel = `, seed=${seed}`;
         }
+        kpiSpec.textContent = `(step ${step}, k=${idx}${seedLabel})`;
 
         // 1) Try surrogate spectrum (optional)
         try{
@@ -1323,8 +1325,8 @@
         }
 
         if (rgb && frgb) {
-          if (fdtdStepUsed === Number(step)) specHint.textContent = `pred vs FDTD: 3x${C} (400-700 nm)`;
-          else specHint.textContent = `pred vs FDTD(step ${fdtdStepUsed}): 3x${C} (400-700 nm)`;
+          if (fdtdStepUsed === Number(step)) specHint.textContent = `pred vs FDTD${seedLabel}: 3x${C} (400-700 nm)`;
+          else specHint.textContent = `pred vs FDTD(step ${fdtdStepUsed}${seedLabel}): 3x${C} (400-700 nm)`;
           const p = computePurityFromRgb(rgb);
           renderPurity(p, step, idx);
           return;

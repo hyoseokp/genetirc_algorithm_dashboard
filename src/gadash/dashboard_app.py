@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 import shutil
 
+import tempfile
+
 import numpy as np
 import torch
 import yaml
@@ -138,6 +140,162 @@ class RunProcState:
     last_exit_code: int | None = None
 
 
+class DashboardFDTDScheduler:
+    """Dashboard-level FDTD verification for multi-seed runs.
+
+    Instead of each subprocess running FDTD independently, the dashboard
+    manages a single centralized FDTD verification on the merged best
+    structure (lowest loss across all seeds).
+    """
+
+    def __init__(self, progress_dir: Path, fdtd_every: int = 10, fdtd_k: int = 1):
+        self.progress_dir = Path(progress_dir)
+        self.fdtd_every = fdtd_every
+        self.fdtd_k = fdtd_k
+        self.lock = threading.Lock()
+        self.thread: threading.Thread | None = None
+        self.verified_steps: set[int] = set()
+        self.last_checked_max_step: int = -1
+        self.fdtd_cfg = None  # Set after resolve
+        self.enabled = False
+
+    def configure(self, fdtd_yaml: str | Path, paths_yaml: str | Path) -> bool:
+        """Resolve FDTD config. Returns True if successful."""
+        try:
+            from .fdtd_verify import resolve_fdtd_cfg
+            self.fdtd_cfg = resolve_fdtd_cfg(fdtd_yaml=fdtd_yaml, paths_yaml=paths_yaml)
+            self.enabled = True
+            print(f"[DASHBOARD-FDTD] Configured successfully", flush=True)
+            return True
+        except Exception as e:
+            print(f"[DASHBOARD-FDTD] Config failed: {e}", flush=True)
+            self.enabled = False
+            return False
+
+    def maybe_trigger(self, merged_data: dict[str, Any]) -> None:
+        """Check if FDTD should be triggered based on merged topk data.
+
+        Called from API endpoints during normal polling.
+        """
+        if not self.enabled or self.fdtd_cfg is None:
+            return
+
+        seed_steps = merged_data.get("seed_steps", {})
+        if not seed_steps:
+            return
+
+        # Use max step across all seeds as the reference
+        max_step = max(seed_steps.values())
+
+        # Check if this step is eligible for FDTD (fdtd_every interval)
+        if self.fdtd_every <= 0:
+            return
+        if max_step < self.fdtd_every:
+            return
+        # Find the nearest fdtd_every boundary
+        trigger_step = (max_step // self.fdtd_every) * self.fdtd_every
+        if trigger_step <= 0:
+            return
+
+        with self.lock:
+            if trigger_step in self.verified_steps:
+                return
+            if self.thread is not None and self.thread.is_alive():
+                return  # Already running
+
+            struct = merged_data.get("struct128_topk")
+            loss = merged_data.get("metric_best_loss")
+            seed_origins = merged_data.get("seed_origins", [])
+            if struct is None or not isinstance(struct, np.ndarray) or struct.ndim != 3:
+                return
+            if struct.shape[0] == 0:
+                return
+
+            # Take only the best fdtd_k structures
+            k_use = min(self.fdtd_k, struct.shape[0])
+            best_struct = struct[:k_use]
+            best_loss = loss[:k_use] if isinstance(loss, np.ndarray) else None
+            best_seeds = seed_origins[:k_use] if seed_origins else []
+
+            print(f"[DASHBOARD-FDTD] Triggering FDTD for merged best at step={trigger_step}, "
+                  f"k={k_use}, seeds={best_seeds}", flush=True)
+
+            self.verified_steps.add(trigger_step)
+
+            # Start worker thread
+            self.thread = threading.Thread(
+                target=self._worker,
+                args=(trigger_step, best_struct, best_loss, best_seeds),
+                daemon=False,
+            )
+            self.thread.start()
+
+    def _worker(self, step: int, struct: np.ndarray, loss, seed_origins) -> None:
+        """Run FDTD in background thread."""
+        try:
+            from .fdtd_verify import verify_topk_with_fdtd
+
+            # Create temp NPZ with merged best
+            tmp_dir = self.progress_dir / "_fdtd_tmp"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            tmp_npz = tmp_dir / f"merged_best_step-{step}.npz"
+            save_dict = {"struct128_topk": struct}
+            if loss is not None:
+                save_dict["metric_best_loss"] = loss
+            np.savez_compressed(str(tmp_npz), **save_dict)
+
+            v = verify_topk_with_fdtd(
+                topk_npz=str(tmp_npz),
+                fdtd_cfg=self.fdtd_cfg,
+                out_dir=os.environ.get("GADASH_FDTD_OUT", r"D:\gadash_fdtd_results"),
+                k=struct.shape[0],
+            )
+
+            # Save result to base progress_dir (not seed-specific)
+            dst = self.progress_dir / f"fdtd_rggb_step-{step}.npy"
+            shutil.copyfile(v.fdtd_rggb_path, dst)
+
+            # Save metadata including seed origins
+            meta = {
+                "step": int(step),
+                "k": int(struct.shape[0]),
+                "out_dir": str(v.out_dir),
+                "seed_origins": [int(s) for s in seed_origins] if seed_origins else [],
+                "source": "merged_best",
+            }
+            (self.progress_dir / "fdtd_meta.json").write_text(
+                json.dumps(meta, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
+            )
+            print(f"[DASHBOARD-FDTD] Saved: {dst}", flush=True)
+
+            # Accumulate fine-tuning dataset
+            try:
+                from .ga_opt import save_finetune_data
+                finetune_path = self.progress_dir.parent / "finetune_dataset.npz"
+                save_finetune_data(
+                    topk_npz=tmp_npz,
+                    fdtd_rggb_npy=dst,
+                    dataset_path=finetune_path,
+                    step=step,
+                )
+            except Exception as e:
+                print(f"[DASHBOARD-FDTD] finetune dataset save failed: {e}", flush=True)
+
+            # Clean up temp
+            try:
+                tmp_npz.unlink()
+            except Exception:
+                pass
+
+        except Exception as e:
+            print(f"[DASHBOARD-FDTD] Failed (step={step}): {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+        finally:
+            with self.lock:
+                self.thread = None
+
+
 def _get_progress_dir_for_seed(base_dir: Path, seed: int | None) -> Path:
     """Return the progress directory for a given seed.
 
@@ -164,6 +322,9 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
     # Multi-seed state tracking
     rstate_dict: dict[int, RunProcState] = {}
     active_seeds: list[int] = []
+
+    # Dashboard-level FDTD scheduler for multi-seed
+    dash_fdtd = DashboardFDTDScheduler(progress_dir)
 
     app = FastAPI(title="GA Dashboard")
 
@@ -518,6 +679,11 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         struct = merged.get("struct128_topk")
         if struct is None or not isinstance(struct, np.ndarray):
             return JSONResponse({"step": None, "k": 0, "metrics": {}, "merged": True, "seed_steps": merged.get("seed_steps", {})})
+
+        # Trigger dashboard-level FDTD if configured
+        if dash_fdtd.enabled and mode != "cur":
+            dash_fdtd.maybe_trigger(merged)
+
         k = int(struct.shape[0])
         seed_steps = merged.get("seed_steps", {})
         seed_origins = merged.get("seed_origins", [])
@@ -702,6 +868,8 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
 
         If exact step is unavailable and fallback=1, use latest available step <= requested;
         if none, use the latest available step overall.
+
+        For multi-seed (no seed param): also check base progress_dir for dashboard-level FDTD results.
         """
         req_step = int(step)
         target_dir = _get_progress_dir_for_seed(progress_dir, seed)
@@ -711,6 +879,16 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
                 m = _FDTD_RE.match(q.name)
                 if m:
                     avail.append(int(m.group(1)))
+        # Also check base progress_dir for dashboard-level (merged) FDTD results
+        if seed is not None and seed != 0:
+            # For specific seed, also check base dir for merged FDTD
+            if progress_dir.exists():
+                for q in progress_dir.iterdir():
+                    m = _FDTD_RE.match(q.name)
+                    if m:
+                        s_val = int(m.group(1))
+                        if s_val not in avail:
+                            avail.append(s_val)
         if not avail:
             return JSONResponse({"error": "fdtd spectrum not available", "requested_step": req_step}, status_code=404)
 
@@ -733,18 +911,27 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         arr = None
         used_step = None
         last_err: Exception | None = None
+        # Search in both target_dir and base progress_dir (for merged FDTD)
+        search_dirs = [target_dir]
+        if target_dir != progress_dir and progress_dir.exists():
+            search_dirs.append(progress_dir)
         for s in candidates:
-            p = target_dir / f"fdtd_rggb_step-{s}.npy"
-            if not p.exists():
-                continue
-            try:
-                arr_try = np.load(p, allow_pickle=False)
-                arr = arr_try
-                used_step = int(s)
+            found = False
+            for sdir in search_dirs:
+                p = sdir / f"fdtd_rggb_step-{s}.npy"
+                if not p.exists():
+                    continue
+                try:
+                    arr_try = np.load(p, allow_pickle=False)
+                    arr = arr_try
+                    used_step = int(s)
+                    found = True
+                    break
+                except Exception as e:
+                    last_err = e
+                    continue
+            if found:
                 break
-            except Exception as e:
-                last_err = e
-                continue
 
         if arr is None or used_step is None:
             return JSONResponse(
@@ -755,7 +942,9 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
             return JSONResponse({"error": f"bad fdtd_rggb shape: {arr.shape}"}, status_code=500)
         if arr.shape[0] <= 0:
             return JSONResponse({"error": "empty fdtd_rggb"}, status_code=500)
-        used_idx = int(max(0, min(int(idx), int(arr.shape[0]) - 1)))
+        if int(idx) >= arr.shape[0]:
+            return JSONResponse({"error": f"fdtd idx {idx} out of range (k={arr.shape[0]})", "requested_step": req_step}, status_code=404)
+        used_idx = int(idx)
         t = torch.from_numpy(arr[used_idx : used_idx + 1].astype(np.float32))
         rgb = _merge_rggb_to_rgb(t)[0].detach().cpu().numpy().astype(np.float32)  # (3,C)
         return JSONResponse(
@@ -950,16 +1139,30 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
             cmd.append("--dry-run")
         if int(resume) == 1:
             cmd.append("--resume")
-        cmd += [
-            "--fdtd-verify",
-            "on" if int(fdtd_verify) == 1 else "off",
-            "--fdtd-config",
-            str(Path(__file__).resolve().parents[2] / "configs" / "fdtd.yaml"),
-        ]
-        if int(fdtd_verify) == 1 and int(fdtd_every) > 0:
-            cmd += ["--fdtd-every", str(int(fdtd_every))]
-        if int(fdtd_verify) == 1 and fdtd_k is not None:
-            cmd += ["--fdtd-k", str(int(fdtd_k))]
+        # FDTD handling: multi-seed uses dashboard-level FDTD, single-seed uses subprocess
+        is_multi_seed = len(active_seeds) > 0 or (effective_seed != 0)
+        if is_multi_seed and int(fdtd_verify) == 1:
+            # Multi-seed: disable per-subprocess FDTD, use dashboard-level instead
+            cmd += ["--fdtd-verify", "off"]
+            fdtd_yaml = str(Path(__file__).resolve().parents[2] / "configs" / "fdtd.yaml")
+            paths_yaml = str(Path(__file__).resolve().parents[2] / "configs" / "paths.yaml")
+            if not dash_fdtd.enabled:
+                dash_fdtd.fdtd_every = int(fdtd_every) if int(fdtd_every) > 0 else 10
+                dash_fdtd.fdtd_k = int(fdtd_k) if fdtd_k is not None else 1
+                dash_fdtd.configure(fdtd_yaml, paths_yaml)
+            print(f"[DASHBOARD-FDTD] Multi-seed: FDTD managed by dashboard (every={dash_fdtd.fdtd_every}, k={dash_fdtd.fdtd_k})", flush=True)
+        else:
+            # Single-seed: use subprocess FDTD as before
+            cmd += [
+                "--fdtd-verify",
+                "on" if int(fdtd_verify) == 1 else "off",
+                "--fdtd-config",
+                str(Path(__file__).resolve().parents[2] / "configs" / "fdtd.yaml"),
+            ]
+            if int(fdtd_verify) == 1 and int(fdtd_every) > 0:
+                cmd += ["--fdtd-every", str(int(fdtd_every))]
+            if int(fdtd_verify) == 1 and fdtd_k is not None:
+                cmd += ["--fdtd-k", str(int(fdtd_k))]
 
         # Initialize per-seed run state
         rs = RunProcState()

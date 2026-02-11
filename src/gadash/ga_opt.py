@@ -309,17 +309,31 @@ class FDTDScheduler:
                 )
                 print(f"[OK] fdtd-verify saved: {dst}", flush=True)
 
-                # Accumulate fine-tuning dataset with verified data
-                finetune_dataset_path = pdir.parent / "finetune_dataset.npz"
-                save_finetune_data(
-                    topk_npz=Path(topk_npz),
-                    fdtd_rggb_npy=dst,
-                    dataset_path=finetune_dataset_path,
-                    step=int(step),
-                )
-
+                # Mark as verified (before attempting fine-tuning dataset save)
                 with self.lock:
                     self.verified.add(int(step))
+
+                # Accumulate fine-tuning dataset with verified data
+                # Note: For multi-seed, finetune_dataset should be in a common location
+                # pdir = data/progress/ (seed=0) or data/progress/seed_N/ (seed>0)
+                # We want: data/finetune_dataset.npz for all seeds
+                try:
+                    if pdir.name.startswith("seed_"):
+                        # Multi-seed: pdir = data/progress/seed_1000 -> common = data/
+                        finetune_dataset_path = pdir.parent.parent / "finetune_dataset.npz"
+                    else:
+                        # Single seed: pdir = data/progress -> common = data/
+                        finetune_dataset_path = pdir.parent / "finetune_dataset.npz"
+
+                    save_finetune_data(
+                        topk_npz=Path(topk_npz),
+                        fdtd_rggb_npy=dst,
+                        dataset_path=finetune_dataset_path,
+                        step=int(step),
+                    )
+                except Exception as e:
+                    # Fine-tuning dataset is optional; don't fail FDTD verification on this error
+                    print(f"[WARN] failed to save finetune dataset (step={step}): {e}", flush=True)
             except Exception as e:
                 print(f"[WARN] fdtd-verify failed (step={step}): {e}", flush=True)
             finally:
@@ -624,13 +638,16 @@ def run_ga(
             )
 
         # Periodic FDTD verification (non-blocking).
+        # NOTE: FDTD scheduler uses progress_dir from its initialization.
+        # For multi-seed: this should work as each seed has its own run context,
+        # but finetune_dataset is saved to pdir.parent which may differ per seed.
         if fdtd_sched is not None:
             if (gidx % every == 0) or (gidx == gens - 1):
                 try:
                     if best_npz.exists():
                         fdtd_sched.request(step=int(gidx), topk_npz=str(best_npz))
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[WARN] FDTD request failed (step={gidx}): {e}", flush=True)
 
         # build next generation
         N = int(cfg.ga.population)

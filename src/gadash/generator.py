@@ -25,7 +25,9 @@ class RuleMFSGenerator:
 
         # enforce min feature size with circular padding (tile-friendly)
         x = soft_morph_close(x, radius=int(self.gen.mfs_radius_px), iters=int(self.gen.mfs_iters))
-        return x.clamp(0.0, 1.0)
+        # Match the original rule's final inversion: binary = ~enforce_mfs_final(...)
+        x = x.clamp(0.0, 1.0)
+        return (1.0 - x).clamp(0.0, 1.0)
 
 
 class RuleMFSSciPyGenerator:

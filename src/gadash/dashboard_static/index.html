@@ -786,6 +786,18 @@
         lossChart.update();
 
         renderLatexFromMeta(meta);
+
+        // Quick visibility: show generator backend used by the last meta.
+        try{
+          const gb = (meta.generator && meta.generator.backend) ? String(meta.generator.backend) : '';
+          const rs = document.getElementById('runStatus');
+          if (rs && gb) {
+            const cur = rs.textContent || '';
+            if (!cur.includes('generator=')) {
+              rs.textContent = (cur ? (cur + '   ') : '') + `generator=${gb}`;
+            }
+          }
+        } catch(e) {}
       }
 
       function numOr(x, d){

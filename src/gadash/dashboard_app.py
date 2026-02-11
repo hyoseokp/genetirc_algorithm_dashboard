@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
 import re
 import subprocess
 import sys
@@ -143,6 +144,27 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
     def ping() -> JSONResponse:
         routes = sorted({getattr(r, "path", "") for r in app.router.routes if getattr(r, "path", "")})
         return JSONResponse({"ok": True, "routes": routes})
+
+    @app.get("/api/debug")
+    def debug() -> JSONResponse:
+        """Minimal diagnostics to confirm which code is running (cwd/import path)."""
+        try:
+            import gadash  # local package
+            gadash_file = getattr(gadash, "__file__", None)
+        except Exception:
+            gadash_file = None
+        return JSONResponse(
+            _json_sanitize(
+                {
+                    "python": sys.executable,
+                    "cwd": os.getcwd(),
+                    "dashboard_app": str(Path(__file__).resolve()),
+                    "gadash": gadash_file,
+                    "repo_root_guess": str(Path(__file__).resolve().parents[2]),
+                    "progress_dir": str(progress_dir),
+                }
+            )
+        )
 
     @app.get("/api/meta")
     def meta() -> JSONResponse:

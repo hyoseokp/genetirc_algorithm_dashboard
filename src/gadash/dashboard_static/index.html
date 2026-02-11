@@ -856,20 +856,54 @@
 
         const x = steps.slice(startIdx);
 
-        // Extract all loss components
-        const lossKeys = ['loss_total', 'loss_spec', 'loss_reg', 'loss_purity', 'loss_fill'];
-        const lossData = {};
-        for (const key of lossKeys) {
-          lossData[key] = (series[key] || []).slice(startIdx);
-        }
+        // Check if this is multi-seed data
+        const isMultiSeed = st.merged === true;
+        const seedLossTotal = series['seed_loss_total'];
+        const seedLossSpec = series['seed_loss_spec'];
+        const seedLossReg = series['seed_loss_reg'];
+        const seedLossPurity = series['seed_loss_purity'];
+        const seedLossFill = series['seed_loss_fill'];
 
         updateLossScale();
         lossChart.data.labels = x.map(String);
 
-        // Update all loss datasets
-        for (let i = 0; i < lossChart.data.datasets.length; i++) {
-          const label = lossChart.data.datasets[i].label;
-          lossChart.data.datasets[i].data = lossData[label] || [];
+        if (isMultiSeed && seedLossTotal) {
+          // Multi-seed mode: create separate dataset for each seed
+          const seedKeys = Object.keys(seedLossTotal).sort();
+          const seedColors = ['#0ea5e9', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6', '#eab308', '#d946ef', '#0891b2', '#7c3aed', '#f97316'];
+
+          // Clear existing datasets and create new ones for each seed
+          lossChart.data.datasets = [];
+          for (let si = 0; si < seedKeys.length; si++) {
+            const seed = seedKeys[si];
+            const color = seedColors[si % seedColors.length];
+            const seedStr = `seed_${seed}`;
+            const seedValues = (seedLossTotal[seed] || []).slice(startIdx);
+            lossChart.data.datasets.push({
+              label: seedStr,
+              data: seedValues,
+              borderColor: color,
+              backgroundColor: 'transparent',
+              fill: false,
+              borderWidth: 2,
+              tension: 0.4,
+              pointRadius: 0,
+              pointHoverRadius: 5
+            });
+          }
+        } else {
+          // Single-seed mode: use loss components
+          const lossKeys = ['loss_total', 'loss_spec', 'loss_reg', 'loss_purity', 'loss_fill'];
+          const lossData = {};
+          for (const key of lossKeys) {
+            lossData[key] = (series[key] || []).slice(startIdx);
+          }
+
+          // Update all loss datasets
+          for (let i = 0; i < lossChart.data.datasets.length; i++) {
+            const label = lossChart.data.datasets[i].label;
+            lossChart.data.datasets[i].data = lossData[label] || [];
+          }
         }
 
         lossChart.update();

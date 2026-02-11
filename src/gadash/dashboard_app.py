@@ -1244,26 +1244,24 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
                     tmp.append(it)
             items = tmp
 
-        # Build series (use last value per step, prefer lower loss if multiple seeds at same step).
-        by_step: dict[int, dict[str, Any]] = {}
+        # Build series preserving all seeds (for multi-seed visualization).
+        # For multi-seed: keep all seed curves separate.
+        # For single-seed: same as before.
+        by_seed_step: dict[tuple[int, int], dict[str, Any]] = {}  # (seed, step) -> item
+        all_seeds = set()
+
         for it in items:
             try:
                 s = int(it.get("step"))
+                seed = int(it.get("seed", 0))  # Default seed=0 if not specified
+                all_seeds.add(seed)
+                by_seed_step[(seed, s)] = it
             except Exception:
                 continue
-            # If multiple seeds at same step, pick lowest loss
-            if s in by_step:
-                try:
-                    existing_loss = float(by_step[s].get("loss_total", float("inf")))
-                    new_loss = float(it.get("loss_total", float("inf")))
-                    if new_loss < existing_loss:
-                        by_step[s] = it
-                except Exception:
-                    pass
-            else:
-                by_step[s] = it
 
-        steps_sorted = sorted(by_step.keys())
+        # Get all unique steps
+        steps_set = {step for seed, step in by_seed_step.keys()}
+        steps_sorted = sorted(steps_set)
 
         def _f(v) -> float:
             try:
@@ -1272,25 +1270,78 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
             except Exception:
                 return float("nan")
 
-        loss_total = [_f(by_step[s].get("loss_total")) for s in steps_sorted]
-        loss_spec = [_f(by_step[s].get("loss_spec")) for s in steps_sorted]
-        loss_reg = [_f(by_step[s].get("loss_reg")) for s in steps_sorted]
-        loss_purity = [_f(by_step[s].get("loss_purity")) for s in steps_sorted]
-        loss_fill = [_f(by_step[s].get("loss_fill")) for s in steps_sorted]
-        latest = by_step[steps_sorted[-1]] if steps_sorted else {}
+        # For multi-seed: create separate series per seed
+        if has_multiple and all_seeds:
+            seed_loss: dict[str, dict[str, list]] = {}
+            for seed in sorted(all_seeds):
+                seed_str = str(seed)
+                seed_loss[seed_str] = {
+                    "loss_total": [],
+                    "loss_spec": [],
+                    "loss_reg": [],
+                    "loss_purity": [],
+                    "loss_fill": []
+                }
+                for step in steps_sorted:
+                    item = by_seed_step.get((seed, step), {})
+                    seed_loss[seed_str]["loss_total"].append(_f(item.get("loss_total")))
+                    seed_loss[seed_str]["loss_spec"].append(_f(item.get("loss_spec")))
+                    seed_loss[seed_str]["loss_reg"].append(_f(item.get("loss_reg")))
+                    seed_loss[seed_str]["loss_purity"].append(_f(item.get("loss_purity")))
+                    seed_loss[seed_str]["loss_fill"].append(_f(item.get("loss_fill")))
+
+            # For latest, use the most recent step's best loss across all seeds
+            latest = {}
+            if steps_sorted:
+                best_loss = float("inf")
+                for seed in all_seeds:
+                    item = by_seed_step.get((seed, steps_sorted[-1]))
+                    if item:
+                        loss = float(item.get("loss_total", float("inf")))
+                        if loss < best_loss:
+                            best_loss = loss
+                            latest = item
+        else:
+            # Single seed: use old format (backward compat)
+            by_step = {}
+            for (seed, step), item in by_seed_step.items():
+                if step not in by_step:
+                    by_step[step] = item
+
+            loss_total = [_f(by_step[s].get("loss_total")) for s in steps_sorted]
+            loss_spec = [_f(by_step[s].get("loss_spec")) for s in steps_sorted]
+            loss_reg = [_f(by_step[s].get("loss_reg")) for s in steps_sorted]
+            loss_purity = [_f(by_step[s].get("loss_purity")) for s in steps_sorted]
+            loss_fill = [_f(by_step[s].get("loss_fill")) for s in steps_sorted]
+            seed_loss = None
+            latest = by_step[steps_sorted[-1]] if steps_sorted else {}
+
+        # Build response
+        series_dict = {
+            "steps": steps_sorted,
+        }
+
+        if has_multiple and seed_loss:
+            # Multi-seed: include per-seed loss data
+            # Format: {"seed_0": {"loss_total": [...], ...}, "seed_1000": {...}, ...}
+            for seed_str, losses in seed_loss.items():
+                for loss_key, values in losses.items():
+                    if f'seed_{loss_key}' not in series_dict:
+                        series_dict[f'seed_{loss_key}'] = {}
+                    series_dict[f'seed_{loss_key}'][seed_str] = values
+        else:
+            # Single-seed: use old format for backward compatibility
+            series_dict["loss_total"] = loss_total
+            series_dict["loss_spec"] = loss_spec
+            series_dict["loss_reg"] = loss_reg
+            series_dict["loss_purity"] = loss_purity
+            series_dict["loss_fill"] = loss_fill
 
         return JSONResponse(
             _json_sanitize(
                 {
                     "meta": meta,
-                    "series": {
-                        "steps": steps_sorted,
-                        "loss_total": loss_total,
-                        "loss_spec": loss_spec,
-                        "loss_reg": loss_reg,
-                        "loss_purity": loss_purity,
-                        "loss_fill": loss_fill,
-                    },
+                    "series": series_dict,
                     "latest": latest,
                     "merged": has_multiple,
                 }

@@ -144,12 +144,25 @@
         background: linear-gradient(180deg, #ef4444, #b91c1c);
       }
       .runStatus {
-        margin-top: 8px;
+        margin-top: 10px;
         font-size: 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        color: #0f172a;
+        background: #f8fafc;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+        min-height: 44px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.45;
+      }
+      .runStatusLabel {
+        font-size: 11px;
         color: #64748b;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        font-weight: 700;
+        margin-top: 10px;
+        margin-bottom: 6px;
       }
       details.adv { margin-top: 10px; }
       details.adv summary {
@@ -386,7 +399,8 @@
           <button class="btn secondary" id="stopBtn" type="button">Stop</button>
           <button class="btn danger" id="resetBtn" type="button">Reset</button>
         </div>
-        <div class="runStatus" id="runStatus"></div>
+        <div class="runStatusLabel">Run Status</div>
+        <div class="runStatus" id="runStatus">idle</div>
 
         <details class="adv">
           <summary>Loss weights</summary>

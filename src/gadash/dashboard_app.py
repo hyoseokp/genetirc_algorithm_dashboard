@@ -1329,6 +1329,28 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
                     if f'seed_{loss_key}' not in series_dict:
                         series_dict[f'seed_{loss_key}'] = {}
                     series_dict[f'seed_{loss_key}'][seed_str] = values
+
+            # Calculate average loss across all seeds
+            avg_loss: dict[str, list] = {}
+            loss_keys = ["loss_total", "loss_spec", "loss_reg", "loss_purity", "loss_fill"]
+            for loss_key in loss_keys:
+                avg_loss[loss_key] = []
+                for step_idx in range(len(steps_sorted)):
+                    values_at_step = []
+                    for seed_str in seed_loss:
+                        val = seed_loss[seed_str][loss_key][step_idx]
+                        if math.isfinite(val):
+                            values_at_step.append(val)
+                    if values_at_step:
+                        avg_loss[loss_key].append(sum(values_at_step) / len(values_at_step))
+                    else:
+                        avg_loss[loss_key].append(float("nan"))
+
+            # Add average data to series_dict
+            for loss_key, avg_values in avg_loss.items():
+                if f'seed_{loss_key}' not in series_dict:
+                    series_dict[f'seed_{loss_key}'] = {}
+                series_dict[f'seed_{loss_key}']['avg'] = avg_values
         else:
             # Single-seed: use old format for backward compatibility
             series_dict["loss_total"] = loss_total

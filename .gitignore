@@ -23,3 +23,10 @@ configs/paths.yaml
 # OS
 .DS_Store
 Thumbs.db
+
+# Local tooling / temporary artifacts
+.claude/
+dashboard.log
+tmp_*/
+*.bak
+*.backup

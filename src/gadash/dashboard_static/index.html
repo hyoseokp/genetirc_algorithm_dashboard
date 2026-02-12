@@ -814,6 +814,23 @@
         });
       }
 
+      function clearCharts(){
+        if (lossChart) {
+          lossChart.data.labels = [];
+          for (const dataset of lossChart.data.datasets) {
+            dataset.data = [];
+          }
+          lossChart.update();
+        }
+        if (specChart) {
+          specChart.data.labels = [];
+          for (const dataset of specChart.data.datasets) {
+            dataset.data = [];
+          }
+          specChart.update();
+        }
+      }
+
       function updateLossScale(){
         if (!lossChart) return;
         lossChart.options.scales.y.type = (ui.scale === 'log') ? 'logarithmic' : 'linear';
@@ -1487,7 +1504,7 @@
           localStorage.setItem('rgb_w_b', String(rgbWB));
           try{
             const dryRun = (ui.dryrun === 'on') ? 1 : 0;
-            const baseUrl = `/api/run/start?n_start=${encodeURIComponent(nStart)}&n_steps=${encodeURIComponent(nSteps)}&topk=${encodeURIComponent(topk)}&dry_run=${encodeURIComponent(dryRun)}&device=${encodeURIComponent(dev)}&chunk_size=${encodeURIComponent(chunk)}&fdtd_verify=${ui.fdtd==='on'?1:0}&fdtd_every=${encodeURIComponent(fdtdEvery)}&ga_mutation_p=${encodeURIComponent(mutP)}&ga_mutation_sigma=${encodeURIComponent(mutSig)}&w_purity=${encodeURIComponent(wPurity)}&w_abs=${encodeURIComponent(wAbs)}&w_fill=${encodeURIComponent(wFill)}&fill_min=${encodeURIComponent(fillMin)}&fill_max=${encodeURIComponent(fillMax)}&purity_dist_w=${encodeURIComponent(purityDistW)}`;
+            const baseUrl = `/api/run/start?n_start=${encodeURIComponent(nStart)}&n_steps=${encodeURIComponent(nSteps)}&topk=${encodeURIComponent(topk)}&dry_run=${encodeURIComponent(dryRun)}&device=${encodeURIComponent(dev)}&chunk_size=${encodeURIComponent(chunk)}&fdtd_verify=${ui.fdtd==='on'?1:0}&fdtd_every=${encodeURIComponent(fdtdEvery)}&ga_mutation_p=${encodeURIComponent(mutP)}&ga_mutation_sigma=${encodeURIComponent(mutSig)}&w_purity=${encodeURIComponent(wPurity)}&w_abs=${encodeURIComponent(wAbs)}&w_fill=${encodeURIComponent(wFill)}&fill_min=${encodeURIComponent(fillMin)}&fill_max=${encodeURIComponent(fillMax)}&purity_dist_w=${encodeURIComponent(purityDistW)}&resume=0`;
             const urlSuffix = `&generator_backend=${encodeURIComponent(genBackend)}&ga_topk_clone_k=${encodeURIComponent(cloneK)}&ga_topk_clone_m=${encodeURIComponent(cloneM)}&ga_topk_clone_sigma_min=${encodeURIComponent(cloneSigMin)}&ga_topk_clone_sigma_max=${encodeURIComponent(cloneSigMax)}&optimizer_type=${encodeURIComponent(optType)}&cma_sigma0=${encodeURIComponent(cmaSigma0)}&rgb_weight_r=${encodeURIComponent(rgbWR)}&rgb_weight_g=${encodeURIComponent(rgbWG)}&rgb_weight_b=${encodeURIComponent(rgbWB)}`;
 
             // Multi-start: launch numRuns independent runs with different seeds
@@ -1509,6 +1526,7 @@
               ui._lastMergedTopk = null;
               thumbs.innerHTML = '';
               topkHint.textContent = '';
+              clearCharts();
               console.log('New run started - caches cleared');
               if (actualNumRuns === 1) {
                 setRunStatus('started');

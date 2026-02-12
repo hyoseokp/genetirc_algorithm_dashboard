@@ -15,8 +15,6 @@ from pathlib import Path
 from typing import Any
 import shutil
 
-import tempfile
-
 import numpy as np
 import torch
 import yaml
@@ -27,6 +25,7 @@ from PIL import Image
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from scipy.interpolate import interp1d
 
 def _merge_rggb_to_rgb(t: torch.Tensor) -> torch.Tensor:
     """Support either RGGB (B,2,2,C) or already-merged RGB (B,3,C)."""
@@ -148,7 +147,6 @@ def _collect_and_save_results(seed: int | None, active_seeds: list[int], progres
 
     Returns dict with folder path and status.
     """
-    print(f"[DEBUG] _collect_and_save_results called: seed={seed}, active_seeds={active_seeds}, progress_dir={progress_dir}", file=sys.stderr)
     try:
         # Determine which seeds to process
         seeds_to_process = [seed] if seed is not None else active_seeds
@@ -171,15 +169,11 @@ def _collect_and_save_results(seed: int | None, active_seeds: list[int], progres
         output_dir = Path("D:\\optimization_results") / folder_name
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Collect best structure and spectra from all seeds
+        # Collect best structure from all seeds
         best_struct = None
         best_loss = float('inf')
         best_step = None
         best_seed = None
-        best_idx = None
-        all_structs = []
-        all_surrogate_specs = []
-        all_fdtd_specs = []
 
         for s in seeds_to_process:
             seed_dir = progress_dir / f"seed_{s}" if s != 0 else progress_dir
@@ -208,9 +202,6 @@ def _collect_and_save_results(seed: int | None, active_seeds: list[int], progres
                     best_struct = structs[local_best_idx]
                     best_step = step
                     best_seed = s
-                    best_idx = local_best_idx
-
-            all_structs.append(structs)
 
         # Save best structure
         if best_struct is not None:
@@ -220,43 +211,50 @@ def _collect_and_save_results(seed: int | None, active_seeds: list[int], progres
         # Load and save FDTD spectrum
         fdtd_file = None
         try:
-            # Try to find FDTD file: first try exact step, then find latest available
             if best_step is not None:
-                fdtd_file = progress_dir / f"fdtd_rggb_step-{best_step}.npy"
-                print(f"[DEBUG] Looking for FDTD file: {fdtd_file}", file=sys.stderr)
+                fdtd_name = f"fdtd_rggb_step-{best_step}.npy"
+                fdtd_candidates: list[Path] = []
 
-                if not fdtd_file.exists():
-                    # Find latest FDTD file available
-                    fdtd_files = sorted(progress_dir.glob("fdtd_rggb_step-*.npy"),
-                                      key=lambda p: int(p.stem.split("-")[-1]))
-                    if fdtd_files:
-                        fdtd_file = fdtd_files[-1]  # Latest FDTD file
-                        print(f"[DEBUG] Exact step FDTD not found, using latest: {fdtd_file}", file=sys.stderr)
-                    else:
-                        fdtd_file = None
-                        print(f"[DEBUG] No FDTD files found in progress dir", file=sys.stderr)
+                # Prefer the seed directory that produced the best structure.
+                if best_seed is not None and int(best_seed) != 0:
+                    fdtd_candidates.append(progress_dir / f"seed_{int(best_seed)}" / fdtd_name)
 
-                if fdtd_file and fdtd_file.exists():
-                    print(f"[DEBUG] FDTD file found, loading...", file=sys.stderr)
+                # Dashboard-level FDTD artifacts are saved in base progress_dir.
+                fdtd_candidates.append(progress_dir / fdtd_name)
+
+                # For robustness, also scan all processed seed dirs.
+                for s in seeds_to_process:
+                    if int(s) == 0:
+                        continue
+                    fdtd_candidates.append(progress_dir / f"seed_{int(s)}" / fdtd_name)
+
+                # Keep order, remove duplicates.
+                uniq_candidates: list[Path] = []
+                seen: set[str] = set()
+                for p in fdtd_candidates:
+                    k = str(p)
+                    if k in seen:
+                        continue
+                    seen.add(k)
+                    uniq_candidates.append(p)
+
+                for cand in uniq_candidates:
+                    if cand.exists():
+                        fdtd_file = cand
+                        break
+
+                if fdtd_file is not None:
                     fdtd_rggb = np.load(fdtd_file)  # (K, 2, 2, C)
-                    print(f"[DEBUG] FDTD shape: {fdtd_rggb.shape}, ndim: {fdtd_rggb.ndim}", file=sys.stderr)
-                    print(f"[DEBUG] FDTD range: min={fdtd_rggb.min():.6f}, max={fdtd_rggb.max():.6f}", file=sys.stderr)
                     # Convert to RGB: (K, 3, C)
                     if fdtd_rggb.ndim == 4:
                         r = fdtd_rggb[:, 0, 0, :]
                         g = 0.5 * (fdtd_rggb[:, 0, 1, :] + fdtd_rggb[:, 1, 0, :])
                         b = fdtd_rggb[:, 1, 1, :]
                         fdtd_rgb = np.stack([r, g, b], axis=1)
-                        # Take absolute value to ensure positive spectrum
-                        fdtd_rgb = np.abs(fdtd_rgb)
-                        print(f"[DEBUG] FDTD RGB range after abs: min={fdtd_rgb.min():.6f}, max={fdtd_rgb.max():.6f}", file=sys.stderr)
                         fdtd_spectrum_file = output_dir / "fdtd_spectrum.npy"
                         np.save(fdtd_spectrum_file, fdtd_rgb)
-                        print(f"[DEBUG] FDTD spectrum saved to {fdtd_spectrum_file}", file=sys.stderr)
         except Exception as e:
             print(f"Warning: Could not save FDTD spectrum: {e}", file=sys.stderr)
-            import traceback
-            traceback.print_exc(file=sys.stderr)
 
         # Try to generate surrogate spectrum (optional)
         surrogate_spectrum_file = output_dir / "surrogate_spectrum.npy"
@@ -265,19 +263,12 @@ def _collect_and_save_results(seed: int | None, active_seeds: list[int], progres
                 x = torch.from_numpy(best_struct.astype(np.float32))[None, ...]
                 y = surrogate.predict(x)
                 rgb_t = _merge_rggb_to_rgb(y)[0]  # (3, C)
-                rgb_np = rgb_t.cpu().numpy()
-                # Take absolute value to ensure positive spectrum
-                rgb_np = np.abs(rgb_np)
-                print(f"[DEBUG] Surrogate spectrum range: min={rgb_np.min():.6f}, max={rgb_np.max():.6f}", file=sys.stderr)
-                np.save(surrogate_spectrum_file, rgb_np)
-                print(f"[DEBUG] Surrogate spectrum saved to {surrogate_spectrum_file}", file=sys.stderr)
+                np.save(surrogate_spectrum_file, rgb_t.cpu().numpy())
         except Exception as e:
             print(f"Warning: Could not generate surrogate spectrum: {e}", file=sys.stderr)
-            import traceback
-            traceback.print_exc(file=sys.stderr)
 
         # Generate visualization plots
-        _save_visualization_plots(best_struct, output_dir, fdtd_file, best_step)
+        _save_visualization_plots(best_struct, output_dir)
 
         # Save metadata
         meta_file = output_dir / "run_meta.json"
@@ -296,13 +287,11 @@ def _collect_and_save_results(seed: int | None, active_seeds: list[int], progres
         return {"ok": True, "folder": str(output_dir), "folder_name": folder_name}
 
     except Exception as e:
-        import traceback
         print(f"Failed to collect/save results: {e}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
         return {"ok": False, "error": str(e)}
 
 
-def _save_visualization_plots(best_struct: np.ndarray | None, output_dir: Path, fdtd_file: Path | None, best_step: int | None) -> None:
+def _save_visualization_plots(best_struct: np.ndarray | None, output_dir: Path) -> None:
     """Generate and save matplotlib visualization plots."""
     try:
         # Structure visualization
@@ -316,99 +305,141 @@ def _save_visualization_plots(best_struct: np.ndarray | None, output_dir: Path, 
             struct_plot_file = output_dir / "structure_visualization.png"
             fig.savefig(struct_plot_file, dpi=100, bbox_inches="tight")
             plt.close(fig)
+            print(f"[DEBUG] Structure visualization saved to {struct_plot_file}", flush=True)
 
-        # Spectrum plot (FDTD only, or surrogate+FDTD comparison if available)
+        # Spectrum comparison plot
         surrogate_file = output_dir / "surrogate_spectrum.npy"
         fdtd_rgb_file = output_dir / "fdtd_spectrum.npy"
 
+        print(f"[DEBUG] Checking for spectrum files: surrogate={surrogate_file.exists()}, fdtd={fdtd_rgb_file.exists()}", flush=True)
+
+        # Use the saved FDTD RGB file when available.
         if fdtd_rgb_file.exists():
             try:
-                fdtd_spec = np.load(fdtd_rgb_file)  # Can be (3, C) or (K, 3, C)
-                print(f"[DEBUG] Loaded FDTD spectrum shape: {fdtd_spec.shape}, ndim: {fdtd_spec.ndim}", file=sys.stderr)
+                print(f"[DEBUG] Loading saved FDTD spectrum from {fdtd_rgb_file}", flush=True)
+                fdtd_spec = np.load(fdtd_rgb_file)  # Already (K, 3, C) or (3, C)
+                print(f"[DEBUG] Loaded FDTD spectrum shape: {fdtd_spec.shape}, ndim: {fdtd_spec.ndim}", flush=True)
 
-                # Ensure we have (3, C) format
-                if fdtd_spec.ndim == 3:  # (K, 3, C)
-                    fdtd_spec = fdtd_spec[0]  # Use first K element: (3, C)
+                # Handle both (K, 3, C) and (3, C) shapes
+                if fdtd_spec.ndim == 3 and fdtd_spec.shape[0] > 0:
+                    fdtd_spec = fdtd_spec[0]  # Take first if (K, 3, C)
 
-                if fdtd_spec.ndim == 2 and fdtd_spec.shape[0] == 3:  # (3, C)
-                    # Ensure FDTD is positive (take absolute value)
-                    fdtd_spec = np.abs(fdtd_spec)
-                    print(f"[DEBUG] FDTD spectrum range: min={fdtd_spec.min():.6f}, max={fdtd_spec.max():.6f}", file=sys.stderr)
+                print(f"[DEBUG] FDTD spectrum after extraction: shape={fdtd_spec.shape}", flush=True)
 
-                    C = fdtd_spec.shape[1]
+                if surrogate_file.exists():
+                    print(f"[DEBUG] Loading surrogate spectrum from {surrogate_file}", flush=True)
+                    surrogate_spec = np.load(surrogate_file)  # (3, C)
+                    print(f"[DEBUG] Loaded surrogate spectrum shape: {surrogate_spec.shape}", flush=True)
+
+                    # Interpolate if channel counts differ
+                    fdtd_channels = fdtd_spec.shape[1]
+                    surrogate_channels = surrogate_spec.shape[1]
+                    print(f"[DEBUG] Channel mismatch check: FDTD={fdtd_channels}, Surrogate={surrogate_channels}", flush=True)
+
+                    if fdtd_channels != surrogate_channels:
+                        print(f"[DEBUG] Interpolating surrogate from {surrogate_channels} to {fdtd_channels} channels", flush=True)
+                        # Interpolate surrogate to match FDTD channels
+                        x_old = np.linspace(0, 1, surrogate_channels)
+                        x_new = np.linspace(0, 1, fdtd_channels)
+                        surrogate_spec_interp = np.zeros((3, fdtd_channels), dtype=np.float32)
+                        for i in range(3):
+                            f = interp1d(x_old, surrogate_spec[i], kind='cubic', fill_value='extrapolate')
+                            surrogate_spec_interp[i] = f(x_new)
+                        surrogate_spec = surrogate_spec_interp
+                        print(f"[DEBUG] Interpolated surrogate spectrum shape: {surrogate_spec.shape}", flush=True)
+
+                    # Generate combined plot
+                    C = fdtd_channels
                     wavelengths = np.linspace(400, 700, C)
 
                     fig, ax = plt.subplots(figsize=(12, 6), dpi=100)
+
                     colors = ['red', 'green', 'blue']
                     labels = ['R', 'G', 'B']
 
-                    # Check if surrogate data exists and interpolate if needed
-                    surrogate_spec = None
-                    print(f"[DEBUG] Surrogate file exists: {surrogate_file.exists()}", file=sys.stderr)
-                    if surrogate_file.exists():
-                        try:
-                            surrogate_spec = np.load(surrogate_file)  # (3, C_surr)
-                            print(f"[DEBUG] Loaded surrogate spectrum shape: {surrogate_spec.shape}, ndim: {surrogate_spec.ndim}", file=sys.stderr)
-                            print(f"[DEBUG] Surrogate spectrum range before processing: min={surrogate_spec.min():.6f}, max={surrogate_spec.max():.6f}", file=sys.stderr)
-
-                            # Interpolate surrogate to match FDTD channel count
-                            if surrogate_spec.ndim == 2 and surrogate_spec.shape[0] == 3:
-                                C_surr = surrogate_spec.shape[1]
-                                if C_surr != C:
-                                    print(f"[DEBUG] Interpolating surrogate from {C_surr} to {C} channels", file=sys.stderr)
-                                    # Interpolate each channel
-                                    from scipy import interpolate
-                                    x_surr = np.linspace(400, 700, C_surr)
-                                    x_fdtd = np.linspace(400, 700, C)
-                                    surrogate_interp = np.zeros((3, C))
-                                    for j in range(3):
-                                        f = interpolate.interp1d(x_surr, surrogate_spec[j], kind='linear', fill_value='extrapolate')
-                                        surrogate_interp[j] = f(x_fdtd)
-                                    surrogate_spec = surrogate_interp
-                                    print(f"[DEBUG] Surrogate interpolation complete: {surrogate_spec.shape}", file=sys.stderr)
-                                else:
-                                    print(f"[DEBUG] Surrogate channels match FDTD ({C}), no interpolation needed", file=sys.stderr)
-
-                                # Ensure surrogate is positive (take absolute value)
-                                surrogate_spec = np.abs(surrogate_spec)
-                                print(f"[DEBUG] Surrogate spectrum range after processing: min={surrogate_spec.min():.6f}, max={surrogate_spec.max():.6f}", file=sys.stderr)
-                            else:
-                                print(f"[DEBUG] Surrogate shape unexpected: {surrogate_spec.shape}", file=sys.stderr)
-                                surrogate_spec = None
-                        except Exception as e:
-                            print(f"[DEBUG] Could not load/interpolate surrogate: {e}", file=sys.stderr)
-                            import traceback
-                            traceback.print_exc(file=sys.stderr)
-                            surrogate_spec = None
-
-                    # Plot FDTD (and surrogate if available)
                     for i, (color, label) in enumerate(zip(colors, labels)):
-                        if surrogate_spec is not None:
-                            print(f"[DEBUG] Plotting surrogate {label}: shape={surrogate_spec[i].shape}, has data={np.any(np.isfinite(surrogate_spec[i]))}", file=sys.stderr)
-                            ax.plot(wavelengths, surrogate_spec[i], color=color, linestyle='--',
-                                   linewidth=2, alpha=0.7, label=f"Surrogate {label}")
-                        print(f"[DEBUG] Plotting FDTD {label}: shape={fdtd_spec[i].shape}, has data={np.any(np.isfinite(fdtd_spec[i]))}", file=sys.stderr)
+                        ax.plot(wavelengths, surrogate_spec[i], color=color, linestyle='--',
+                               linewidth=2, alpha=0.7, label=f"Surrogate {label}")
                         ax.plot(wavelengths, fdtd_spec[i], color=color, linestyle='-',
-                               linewidth=2.5, alpha=0.9, label=f"FDTD {label}")
+                               linewidth=2, alpha=0.9, label=f"FDTD {label}")
 
                     ax.set_xlabel("Wavelength (nm)", fontsize=12)
                     ax.set_ylabel("Intensity", fontsize=12)
-                    title = "Spectrum: FDTD Verification" if surrogate_spec is None else "Spectrum Comparison: Surrogate vs FDTD"
-                    ax.set_title(title)
+                    ax.set_title("Spectrum Comparison: Surrogate vs FDTD")
                     ax.legend(loc="best", fontsize=10)
                     ax.grid(True, alpha=0.3)
 
                     spectrum_plot_file = output_dir / "spectrum_comparison.png"
                     fig.savefig(spectrum_plot_file, dpi=100, bbox_inches="tight")
                     plt.close(fig)
-                    print(f"[DEBUG] Spectrum plot saved to {spectrum_plot_file}", file=sys.stderr)
+                    print(f"[DEBUG] Spectrum comparison plot saved to {spectrum_plot_file}", flush=True)
+                else:
+                    # Only FDTD, no surrogate
+                    print(f"[DEBUG] No surrogate spectrum found, generating FDTD-only plot", flush=True)
+                    C = fdtd_spec.shape[1]
+                    wavelengths = np.linspace(400, 700, C)
+
+                    fig, ax = plt.subplots(figsize=(12, 6), dpi=100)
+
+                    colors = ['red', 'green', 'blue']
+                    labels = ['R', 'G', 'B']
+
+                    for i, (color, label) in enumerate(zip(colors, labels)):
+                        ax.plot(wavelengths, fdtd_spec[i], color=color, linestyle='-',
+                               linewidth=2, alpha=0.9, label=f"FDTD {label}")
+
+                    ax.set_xlabel("Wavelength (nm)", fontsize=12)
+                    ax.set_ylabel("Intensity", fontsize=12)
+                    ax.set_title("FDTD Spectrum")
+                    ax.legend(loc="best", fontsize=10)
+                    ax.grid(True, alpha=0.3)
+
+                    spectrum_plot_file = output_dir / "spectrum_comparison.png"
+                    fig.savefig(spectrum_plot_file, dpi=100, bbox_inches="tight")
+                    plt.close(fig)
+                    print(f"[DEBUG] FDTD-only spectrum plot saved to {spectrum_plot_file}", flush=True)
+
             except Exception as e:
-                print(f"Warning: Could not generate spectrum plot: {e}", file=sys.stderr)
+                print(f"[DEBUG] Error generating spectrum plot: {e}", file=sys.stderr, flush=True)
                 import traceback
-                traceback.print_exc(file=sys.stderr)
+                traceback.print_exc()
+        elif surrogate_file.exists():
+            # Fallback: save surrogate-only plot if FDTD data is unavailable.
+            try:
+                surrogate_spec = np.load(surrogate_file)  # (3, C)
+                C = surrogate_spec.shape[1]
+                wavelengths = np.linspace(400, 700, C)
+
+                fig, ax = plt.subplots(figsize=(12, 6), dpi=100)
+                colors = ['red', 'green', 'blue']
+                labels = ['R', 'G', 'B']
+                for i, (color, label) in enumerate(zip(colors, labels)):
+                    ax.plot(
+                        wavelengths,
+                        surrogate_spec[i],
+                        color=color,
+                        linestyle='--',
+                        linewidth=2,
+                        alpha=0.9,
+                        label=f"Surrogate {label}",
+                    )
+                ax.set_xlabel("Wavelength (nm)", fontsize=12)
+                ax.set_ylabel("Intensity", fontsize=12)
+                ax.set_title("Surrogate Spectrum")
+                ax.legend(loc="best", fontsize=10)
+                ax.grid(True, alpha=0.3)
+
+                spectrum_plot_file = output_dir / "spectrum_comparison.png"
+                fig.savefig(spectrum_plot_file, dpi=100, bbox_inches="tight")
+                plt.close(fig)
+                print(f"[DEBUG] Surrogate-only spectrum plot saved to {spectrum_plot_file}", flush=True)
+            except Exception as e:
+                print(f"[DEBUG] Error generating surrogate-only spectrum plot: {e}", file=sys.stderr, flush=True)
 
     except Exception as e:
-        print(f"Warning: Could not generate visualizations: {e}", file=sys.stderr)
+        print(f"Warning: Could not generate visualizations: {e}", file=sys.stderr, flush=True)
+        import traceback
+        traceback.print_exc()
 
 
 class DashboardFDTDScheduler:
@@ -1286,33 +1317,6 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         Each seed runs in its own progress subdirectory (seed=0 or None → base dir).
         Multiple seeds can run in parallel without file conflicts.
         """
-        # When resume=0 (new run), clear previous seeds from dashboard state
-        # This prevents old graphs from appearing when changing number of parallel runs
-        if int(resume) != 1:
-            # Clear rstate_dict and active_seeds for fresh start
-            for s in list(rstate_dict.keys()):
-                rs = rstate_dict[s]
-                if rs.proc is not None:
-                    try:
-                        rs.proc.terminate()
-                    except Exception:
-                        pass
-            rstate_dict.clear()
-            active_seeds.clear()
-
-            # Also delete base progress_dir FDTD files (for multi-seed dashboard-level FDTD)
-            try:
-                if progress_dir.exists():
-                    for f in progress_dir.glob("fdtd_rggb_*.npy"):
-                        f.unlink()
-                    for f in progress_dir.glob("fdtd_meta.json"):
-                        f.unlink()
-                    print(f"[DASHBOARD] Cleaned up base FDTD files", file=sys.stderr)
-            except Exception:
-                pass
-
-            print(f"[DASHBOARD] Cleared previous run state for new run", file=sys.stderr)
-
         effective_seed = seed if seed is not None else 0
 
         # Check if this specific seed is already running
@@ -1326,7 +1330,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         # Create seed-specific progress directory
         seed_progress_dir = _init_seed_dir(progress_dir, effective_seed)
 
-        # Clean up old topk/metrics/FDTD files unless resuming
+        # Clean up old topk/metrics files unless resuming
         if int(resume) != 1:
             try:
                 for f in seed_progress_dir.glob("topk_*.npz"):
@@ -1337,12 +1341,6 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
                     f.unlink()
                 for f in seed_progress_dir.glob("run_meta*.json"):
                     f.unlink()
-                # Also delete FDTD files to prevent stale spectrum data from appearing
-                for f in seed_progress_dir.glob("fdtd_rggb_*.npy"):
-                    f.unlink()
-                for f in seed_progress_dir.glob("fdtd_meta.json"):
-                    f.unlink()
-                print(f"[DASHBOARD] Cleaned up old FDTD files for seed {effective_seed}", file=sys.stderr)
             except Exception:
                 pass  # Best effort cleanup
             # Also clear caches

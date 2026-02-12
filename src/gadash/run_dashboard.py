@@ -42,9 +42,9 @@ def main() -> int:
                     config_yaml=Path(cfg_yaml),
                     device=torch.device(str(args.device)),
                 )
-                print(f"[DASHBOARD] ✓ Surrogate loaded successfully")
+                print(f"[DASHBOARD] OK: Surrogate loaded successfully")
         except Exception as e:
-            print(f"[DASHBOARD] ✗ Surrogate load failed: {e}")
+            print(f"[DASHBOARD] FAILED: Surrogate load failed: {e}")
             import traceback
             traceback.print_exc()
             surrogate = None

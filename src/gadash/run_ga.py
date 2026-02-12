@@ -18,6 +18,7 @@ def main() -> int:
     p.add_argument("--fdtd-k", type=int, default=None, help="How many topk items to verify (default: all in snapshot).")
     p.add_argument("--fdtd-config", default="configs/fdtd.yaml")
     p.add_argument("--resume", action="store_true", help="Resume optimization from the last checkpoint.")
+    p.add_argument("--log-dir", default=None, help="Directory for optimization logs (e.g., D://optimization_log)")
     args = p.parse_args()
 
     cfg = load_config(args.config, args.paths)
@@ -33,6 +34,7 @@ def main() -> int:
         fdtd_config=args.fdtd_config,
         paths_yaml=args.paths,
         resume=args.resume,
+        optimization_log_dir=args.log_dir,
     )
 
     optimizer_type = str(cfg.ga.optimizer_type).lower()

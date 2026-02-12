@@ -6,6 +6,7 @@ so the dashboard can display CMA-ES runs identically.
 from __future__ import annotations
 
 import math
+import time
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ from .ga_opt import (
     load_resume_state,
     setup_fdtd_scheduler,
 )
+from .optimization_logger import OptimizationLogManager
 from .progress_logger import ProgressLogger
 
 
@@ -82,8 +84,25 @@ def run_cmaes(
     fdtd_config: str | Path = "configs/fdtd.yaml",
     paths_yaml: str | Path = "configs/paths.yaml",
     resume: bool = False,
+    optimization_log_dir: str | Path | None = None,
 ) -> dict[str, Any]:
+    start_time = time.time()
     dev = _torch_device(device)
+
+    opt_log_manager = None
+    success = False
+    error_msg = None
+
+    if optimization_log_dir:
+        try:
+            opt_log_manager = OptimizationLogManager(
+                Path(optimization_log_dir),
+                optimizer_type="CMA-ES",
+                seed=int(getattr(cfg.ga, "seed", 0) or 0),
+                start_time=start_time,
+            )
+        except Exception as e:
+            print(f"[WARN] Failed to initialize optimization logger: {e}", flush=True)
 
     surrogate = build_surrogate(cfg, dev, dry_run=dry_run)
     gen = build_generator(cfg.design, cfg.generator)
@@ -154,109 +173,134 @@ def run_cmaes(
     else:
         write_run_meta(cfg, logger, dev, engine="cmaes")
 
-    for gidx in range(start_step, gens):
-        # --- Sample ---
-        solutions, B, D = _cma_sample(mean, sigma, C, lam, rng)
+    try:
+        for gidx in range(start_step, gens):
+            # --- Sample ---
+            solutions, B, D = _cma_sample(mean, sigma, C, lam, rng)
 
-        # Convert to torch tensor (B,1,S,S) for evaluation
-        pop = torch.tensor(solutions, dtype=torch.float32, device=dev).reshape(lam, 1, S, S)
+            # Convert to torch tensor (B,1,S,S) for evaluation
+            pop = torch.tensor(solutions, dtype=torch.float32, device=dev).reshape(lam, 1, S, S)
 
-        # --- Evaluate ---
-        ev = eval_losses(pop)
-        loss_total = ev["loss_total"]
+            # --- Evaluate ---
+            ev = eval_losses(pop)
+            loss_total = ev["loss_total"]
 
-        # --- Sort ---
-        order = torch.argsort(loss_total)
-        loss_sorted = loss_total[order]
-        solutions_sorted = solutions[order.cpu().numpy()]
+            # --- Sort ---
+            order = torch.argsort(loss_total)
+            loss_sorted = loss_total[order]
+            solutions_sorted = solutions[order.cpu().numpy()]
 
-        # --- Update best-so-far pool ---
-        if best_araw is None:
-            best_araw = pop[order[: min(topk, lam)]].detach().clone()
-            best_loss_vec = loss_sorted[: min(topk, lam)].detach().clone()
-        else:
-            cand_araw = torch.cat([best_araw, pop], dim=0)
-            cand_loss = torch.cat([best_loss_vec, loss_total], dim=0)
-            o2 = torch.argsort(cand_loss)[: min(topk, cand_loss.numel())]
-            best_araw = cand_araw[o2].detach().clone()
-            best_loss_vec = cand_loss[o2].detach().clone()
+            # --- Update best-so-far pool ---
+            if best_araw is None:
+                best_araw = pop[order[: min(topk, lam)]].detach().clone()
+                best_loss_vec = loss_sorted[: min(topk, lam)].detach().clone()
+            else:
+                cand_araw = torch.cat([best_araw, pop], dim=0)
+                cand_loss = torch.cat([best_loss_vec, loss_total], dim=0)
+                o2 = torch.argsort(cand_loss)[: min(topk, cand_loss.numel())]
+                best_araw = cand_araw[o2].detach().clone()
+                best_loss_vec = cand_loss[o2].detach().clone()
 
-        # --- Save snapshots ---
-        a_cur = pop[order[:topk]]
-        save_topk_snapshot(a_cur, loss_sorted[:topk], gen, "cur_loss", progress_dir_p / f"topk_cur_step-{gidx}.npz")
+            # --- Save snapshots ---
+            a_cur = pop[order[:topk]]
+            save_topk_snapshot(a_cur, loss_sorted[:topk], gen, "cur_loss", progress_dir_p / f"topk_cur_step-{gidx}.npz")
 
-        assert best_araw is not None and best_loss_vec is not None
-        best_npz = progress_dir_p / f"topk_step-{gidx}.npz"
-        save_topk_snapshot(best_araw[:topk], best_loss_vec[:topk], gen, "best_loss", best_npz)
+            assert best_araw is not None and best_loss_vec is not None
+            best_npz = progress_dir_p / f"topk_step-{gidx}.npz"
+            save_topk_snapshot(best_araw[:topk], best_loss_vec[:topk], gen, "best_loss", best_npz)
 
-        # --- Metrics ---
-        m = {
-            "ts": logger.now_iso(),
-            "step": int(gidx),
-            "loss_total": float(loss_total.mean().item()),
-            "loss_spec": float(ev["loss_spec"].mean().item()),
-            "loss_reg": float(ev["loss_reg"].mean().item()),
-            "loss_purity": float(ev["loss_purity"].mean().item()),
-            "loss_fill": float(ev["loss_fill"].mean().item()),
-            "fill": float(ev["fill"].mean().item()),
-        }
-        logger.append_metrics(m)
+            # --- Metrics ---
+            m = {
+                "ts": logger.now_iso(),
+                "step": int(gidx),
+                "loss_total": float(loss_total.mean().item()),
+                "loss_spec": float(ev["loss_spec"].mean().item()),
+                "loss_reg": float(ev["loss_reg"].mean().item()),
+                "loss_purity": float(ev["loss_purity"].mean().item()),
+                "loss_fill": float(ev["loss_fill"].mean().item()),
+                "fill": float(ev["fill"].mean().item()),
+            }
+            logger.append_metrics(m)
 
-        if cfg.io.print_every > 0 and (gidx % int(cfg.io.print_every) == 0 or gidx == gens - 1):
-            print(
-                f"[CMA {gidx}/{gens-1}] loss_mean={m['loss_total']:.4f} fill={m['fill']:.3f} sigma={sigma:.4f}"
+            if cfg.io.print_every > 0 and (gidx % int(cfg.io.print_every) == 0 or gidx == gens - 1):
+                print(
+                    f"[CMA {gidx}/{gens-1}] loss_mean={m['loss_total']:.4f} fill={m['fill']:.3f} sigma={sigma:.4f}"
+                )
+
+            # Periodic FDTD verification (non-blocking).
+            if fdtd_sched is not None:
+                if (gidx % fdtd_every_n == 0) or (gidx == gens - 1):
+                    try:
+                        if best_npz.exists():
+                            fdtd_sched.request(step=int(gidx), topk_npz=str(best_npz))
+                    except Exception:
+                        pass
+
+            # --- CMA-ES update ---
+            # Weighted mean of top-mu solutions
+            top_mu = solutions_sorted[:mu]  # (mu, dim)
+            mean_old = mean.copy()
+            mean = np.sum(weights[:, None] * top_mu, axis=0)
+
+            # Cumulation: step-size (p_sigma)
+            invsqrtC = B @ np.diag(1.0 / D) @ B.T
+            delta_mean = (mean - mean_old) / sigma
+            p_sigma = (1.0 - c_sigma) * p_sigma + math.sqrt(c_sigma * (2.0 - c_sigma) * mu_eff) * (invsqrtC @ delta_mean)
+
+            # Heaviside function (hsig)
+            norm_ps = float(np.linalg.norm(p_sigma))
+            hsig_threshold = (1.4 + 2.0 / (dim + 1.0)) * chi_n * math.sqrt(1.0 - (1.0 - c_sigma) ** (2 * (gidx + 1)))
+            hsig = 1.0 if norm_ps < hsig_threshold else 0.0
+
+            # Cumulation: covariance (p_c)
+            p_c = (1.0 - c_c) * p_c + hsig * math.sqrt(c_c * (2.0 - c_c) * mu_eff) * delta_mean
+
+            # Covariance matrix update (rank-one + rank-mu)
+            diffs = (top_mu - mean_old[None, :]) / sigma  # (mu, dim)
+            rank_mu_update = np.zeros_like(C)
+            for i in range(mu):
+                rank_mu_update += weights[i] * np.outer(diffs[i], diffs[i])
+
+            C = (
+                (1.0 - c_1 - c_mu) * C
+                + c_1 * (np.outer(p_c, p_c) + (1.0 - hsig) * c_c * (2.0 - c_c) * C)
+                + c_mu * rank_mu_update
             )
 
-        # Periodic FDTD verification (non-blocking).
+            # Enforce symmetry
+            C = 0.5 * (C + C.T)
+
+            # Step-size update (CSA)
+            sigma = sigma * math.exp((c_sigma / d_sigma) * (norm_ps / chi_n - 1.0))
+
+            # Clamp sigma to avoid degenerate behaviour
+            sigma = max(1e-12, min(sigma, 1e6))
+
         if fdtd_sched is not None:
-            if (gidx % fdtd_every_n == 0) or (gidx == gens - 1):
-                try:
-                    if best_npz.exists():
-                        fdtd_sched.request(step=int(gidx), topk_npz=str(best_npz))
-                except Exception:
-                    pass
+            fdtd_sched.drain()
 
-        # --- CMA-ES update ---
-        # Weighted mean of top-mu solutions
-        top_mu = solutions_sorted[:mu]  # (mu, dim)
-        mean_old = mean.copy()
-        mean = np.sum(weights[:, None] * top_mu, axis=0)
+        success = True
+        return {"progress_dir": str(progress_dir), "gens": gens}
 
-        # Cumulation: step-size (p_sigma)
-        invsqrtC = B @ np.diag(1.0 / D) @ B.T
-        delta_mean = (mean - mean_old) / sigma
-        p_sigma = (1.0 - c_sigma) * p_sigma + math.sqrt(c_sigma * (2.0 - c_sigma) * mu_eff) * (invsqrtC @ delta_mean)
+    except KeyboardInterrupt:
+        error_msg = "User interrupted"
+        success = False
+        print("[CMAES] Optimization interrupted by user", flush=True)
 
-        # Heaviside function (hsig)
-        norm_ps = float(np.linalg.norm(p_sigma))
-        hsig_threshold = (1.4 + 2.0 / (dim + 1.0)) * chi_n * math.sqrt(1.0 - (1.0 - c_sigma) ** (2 * (gidx + 1)))
-        hsig = 1.0 if norm_ps < hsig_threshold else 0.0
+    except Exception as e:
+        error_msg = str(e)
+        success = False
+        print(f"[CMAES] Error during optimization: {e}", flush=True)
 
-        # Cumulation: covariance (p_c)
-        p_c = (1.0 - c_c) * p_c + hsig * math.sqrt(c_c * (2.0 - c_c) * mu_eff) * delta_mean
-
-        # Covariance matrix update (rank-one + rank-mu)
-        diffs = (top_mu - mean_old[None, :]) / sigma  # (mu, dim)
-        rank_mu_update = np.zeros_like(C)
-        for i in range(mu):
-            rank_mu_update += weights[i] * np.outer(diffs[i], diffs[i])
-
-        C = (
-            (1.0 - c_1 - c_mu) * C
-            + c_1 * (np.outer(p_c, p_c) + (1.0 - hsig) * c_c * (2.0 - c_c) * C)
-            + c_mu * rank_mu_update
-        )
-
-        # Enforce symmetry
-        C = 0.5 * (C + C.T)
-
-        # Step-size update (CSA)
-        sigma = sigma * math.exp((c_sigma / d_sigma) * (norm_ps / chi_n - 1.0))
-
-        # Clamp sigma to avoid degenerate behaviour
-        sigma = max(1e-12, min(sigma, 1e6))
-
-    if fdtd_sched is not None:
-        fdtd_sched.drain()
-
-    return {"progress_dir": str(progress_dir), "gens": gens}
+    finally:
+        if opt_log_manager is not None:
+            try:
+                opt_log_manager.finalize(
+                    progress_dir=Path(progress_dir),
+                    engine="cmaes",
+                    success=success,
+                    error_msg=error_msg,
+                )
+                print(f"[LOG] Optimization logging finalized", flush=True)
+            except Exception as e:
+                print(f"[WARN] Error during finalization: {e}", flush=True)

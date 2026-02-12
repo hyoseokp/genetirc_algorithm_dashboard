@@ -524,8 +524,28 @@ def run_ga(
     fdtd_config: str | Path = "configs/fdtd.yaml",
     paths_yaml: str | Path = "configs/paths.yaml",
     resume: bool = False,
+    optimization_log_dir: str | Path | None = None,
 ) -> dict[str, Any]:
+    import time
+    from .optimization_logger import OptimizationLogManager
+
+    start_time = time.time()
     dev = _torch_device(device)
+
+    opt_log_manager = None
+    success = False
+    error_msg = None
+
+    if optimization_log_dir:
+        try:
+            opt_log_manager = OptimizationLogManager(
+                Path(optimization_log_dir),
+                optimizer_type="GA",
+                seed=int(getattr(cfg.ga, "seed", 0) or 0),
+                start_time=start_time,
+            )
+        except Exception as e:
+            print(f"[WARN] Failed to initialize optimization logger: {e}", flush=True)
 
     surrogate = build_surrogate(cfg, dev, dry_run=dry_run)
     gen = build_generator(cfg.design, cfg.generator)
@@ -589,122 +609,145 @@ def run_ga(
         progress_dir=progress_dir,
     )
 
-    for gidx in range(start_step, gens):
-        ev = eval_losses(pop)
-        loss_total = ev["loss_total"]
+    try:
+        for gidx in range(start_step, gens):
+            ev = eval_losses(pop)
+            loss_total = ev["loss_total"]
 
-        # sort by fitness
-        order = torch.argsort(loss_total)
-        pop_sorted = pop[order]
-        loss_sorted = loss_total[order]
+            # sort by fitness
+            order = torch.argsort(loss_total)
+            pop_sorted = pop[order]
+            loss_sorted = loss_total[order]
 
-        # update best-so-far pool
-        if best_araw is None:
-            best_araw = pop_sorted[: min(topk, pop.shape[0])].detach().clone()
-            best_loss_vec = loss_sorted[: min(topk, pop.shape[0])].detach().clone()
-        else:
-            cand_araw = torch.cat([best_araw, pop], dim=0)
-            cand_loss = torch.cat([best_loss_vec, loss_total], dim=0)
-            o2 = torch.argsort(cand_loss)[: min(topk, cand_loss.numel())]
-            best_araw = cand_araw[o2].detach().clone()
-            best_loss_vec = cand_loss[o2].detach().clone()
-
-        progress_dir_p = Path(progress_dir)
-        # current-gen topk
-        a_cur = pop[order[:topk]]
-        save_topk_snapshot(a_cur, loss_sorted[:topk], gen, "cur_loss", progress_dir_p / f"topk_cur_step-{gidx}.npz")
-
-        # best-so-far topk
-        assert best_araw is not None and best_loss_vec is not None
-        best_npz = progress_dir_p / f"topk_step-{gidx}.npz"
-        save_topk_snapshot(best_araw[:topk], best_loss_vec[:topk], gen, "best_loss", best_npz)
-
-        # metrics
-        m = {
-            "ts": logger.now_iso(),
-            "step": int(gidx),
-            "loss_total": float(loss_total.mean().item()),
-            "loss_spec": float(ev["loss_spec"].mean().item()),
-            "loss_reg": float(ev["loss_reg"].mean().item()),
-            "loss_purity": float(ev["loss_purity"].mean().item()),
-            "loss_fill": float(ev["loss_fill"].mean().item()),
-            "fill": float(ev["fill"].mean().item()),
-        }
-        logger.append_metrics(m)
-
-        if cfg.io.print_every > 0 and (gidx % int(cfg.io.print_every) == 0 or gidx == gens - 1):
-            print(
-                f"[GEN {gidx}/{gens-1}] loss_mean={m['loss_total']:.4f} fill={m['fill']:.3f}"
-            )
-
-        # Periodic FDTD verification (non-blocking).
-        # NOTE: FDTD scheduler uses progress_dir from its initialization.
-        # For multi-seed: this should work as each seed has its own run context,
-        # but finetune_dataset is saved to pdir.parent which may differ per seed.
-        if fdtd_sched is not None:
-            if (gidx % every == 0) or (gidx == gens - 1):
-                try:
-                    if best_npz.exists():
-                        fdtd_sched.request(step=int(gidx), topk_npz=str(best_npz))
-                except Exception as e:
-                    print(f"[WARN] FDTD request failed (step={gidx}): {e}", flush=True)
-
-        # build next generation
-        N = int(cfg.ga.population)
-        keep_k = min(int(cfg.io.topk), N)
-        keep = pop_sorted[:keep_k]
-
-        # Elite cloning (micro Gaussian noise in raw-logit space).
-        clone_k = int(getattr(cfg.ga, "topk_clone_k", 0) or 0)
-        clone_m = int(getattr(cfg.ga, "topk_clone_m", 0) or 0)
-        clone_k = max(0, min(clone_k, keep_k))
-        clone_m = max(0, clone_m)
-        sig_min = float(getattr(cfg.ga, "topk_clone_sigma_min", 0.02) or 0.02)
-        sig_max = float(getattr(cfg.ga, "topk_clone_sigma_max", 0.08) or 0.08)
-        if sig_max < sig_min:
-            sig_min, sig_max = sig_max, sig_min
-
-        clones_list: list[torch.Tensor] = []
-        cap_after_keep = max(0, N - keep.shape[0])
-        total_clone_target = clone_k * clone_m
-        total_clone = min(total_clone_target, cap_after_keep)
-        if clone_k > 0 and clone_m > 0 and total_clone > 0:
-            src = pop_sorted[:clone_k]
-            if clone_m == 1:
-                sigmas = [sig_min]
+            # update best-so-far pool
+            if best_araw is None:
+                best_araw = pop_sorted[: min(topk, pop.shape[0])].detach().clone()
+                best_loss_vec = loss_sorted[: min(topk, pop.shape[0])].detach().clone()
             else:
-                sigmas = [sig_min + (sig_max - sig_min) * (j / (clone_m - 1)) for j in range(clone_m)]
+                cand_araw = torch.cat([best_araw, pop], dim=0)
+                cand_loss = torch.cat([best_loss_vec, loss_total], dim=0)
+                o2 = torch.argsort(cand_loss)[: min(topk, cand_loss.numel())]
+                best_araw = cand_araw[o2].detach().clone()
+                best_loss_vec = cand_loss[o2].detach().clone()
 
-            remaining = total_clone
-            for sigma in sigmas:
-                if remaining <= 0:
-                    break
-                c = src + float(sigma) * torch.randn_like(src)
-                if c.shape[0] > remaining:
-                    c = c[:remaining]
-                clones_list.append(c)
-                remaining -= int(c.shape[0])
+            progress_dir_p = Path(progress_dir)
+            # current-gen topk
+            a_cur = pop[order[:topk]]
+            save_topk_snapshot(a_cur, loss_sorted[:topk], gen, "cur_loss", progress_dir_p / f"topk_cur_step-{gidx}.npz")
 
-        clones = torch.cat(clones_list, dim=0) if clones_list else torch.empty((0,) + keep.shape[1:], device=dev)
+            # best-so-far topk
+            assert best_araw is not None and best_loss_vec is not None
+            best_npz = progress_dir_p / f"topk_step-{gidx}.npz"
+            save_topk_snapshot(best_araw[:topk], best_loss_vec[:topk], gen, "best_loss", best_npz)
 
-        # Children: tournament + blend crossover + mutation.
-        n_child = max(0, N - int(keep.shape[0]) - int(clones.shape[0]))
-        if n_child > 0:
-            sel1 = _tournament_select_batch(loss_total, t_k, n_child)
-            sel2 = _tournament_select_batch(loss_total, t_k, n_child)
-            p1 = pop[sel1]
-            p2 = pop[sel2]
-            child = _make_child(p1, p2, alpha)
-            if mut_p > 0.0 and mut_sigma > 0.0:
-                msk = (torch.rand((n_child,), device=dev) < float(mut_p))
-                if bool(msk.any()):
-                    child[msk] = child[msk] + float(mut_sigma) * torch.randn_like(child[msk])
-        else:
-            child = torch.empty((0,) + keep.shape[1:], device=dev)
+            # metrics
+            m = {
+                "ts": logger.now_iso(),
+                "step": int(gidx),
+                "loss_total": float(loss_total.mean().item()),
+                "loss_spec": float(ev["loss_spec"].mean().item()),
+                "loss_reg": float(ev["loss_reg"].mean().item()),
+                "loss_purity": float(ev["loss_purity"].mean().item()),
+                "loss_fill": float(ev["loss_fill"].mean().item()),
+                "fill": float(ev["fill"].mean().item()),
+            }
+            logger.append_metrics(m)
 
-        pop = torch.cat([keep, clones, child], dim=0)[:N]
+            if cfg.io.print_every > 0 and (gidx % int(cfg.io.print_every) == 0 or gidx == gens - 1):
+                print(
+                    f"[GEN {gidx}/{gens-1}] loss_mean={m['loss_total']:.4f} fill={m['fill']:.3f}"
+                )
 
-    if fdtd_sched is not None:
-        fdtd_sched.drain()
+            # Periodic FDTD verification (non-blocking).
+            # NOTE: FDTD scheduler uses progress_dir from its initialization.
+            # For multi-seed: this should work as each seed has its own run context,
+            # but finetune_dataset is saved to pdir.parent which may differ per seed.
+            if fdtd_sched is not None:
+                if (gidx % every == 0) or (gidx == gens - 1):
+                    try:
+                        if best_npz.exists():
+                            fdtd_sched.request(step=int(gidx), topk_npz=str(best_npz))
+                    except Exception as e:
+                        print(f"[WARN] FDTD request failed (step={gidx}): {e}", flush=True)
+
+            # build next generation
+            N = int(cfg.ga.population)
+            keep_k = min(int(cfg.io.topk), N)
+            keep = pop_sorted[:keep_k]
+
+            # Elite cloning (micro Gaussian noise in raw-logit space).
+            clone_k = int(getattr(cfg.ga, "topk_clone_k", 0) or 0)
+            clone_m = int(getattr(cfg.ga, "topk_clone_m", 0) or 0)
+            clone_k = max(0, min(clone_k, keep_k))
+            clone_m = max(0, clone_m)
+            sig_min = float(getattr(cfg.ga, "topk_clone_sigma_min", 0.02) or 0.02)
+            sig_max = float(getattr(cfg.ga, "topk_clone_sigma_max", 0.08) or 0.08)
+            if sig_max < sig_min:
+                sig_min, sig_max = sig_max, sig_min
+
+            clones_list: list[torch.Tensor] = []
+            cap_after_keep = max(0, N - keep.shape[0])
+            total_clone_target = clone_k * clone_m
+            total_clone = min(total_clone_target, cap_after_keep)
+            if clone_k > 0 and clone_m > 0 and total_clone > 0:
+                src = pop_sorted[:clone_k]
+                if clone_m == 1:
+                    sigmas = [sig_min]
+                else:
+                    sigmas = [sig_min + (sig_max - sig_min) * (j / (clone_m - 1)) for j in range(clone_m)]
+
+                remaining = total_clone
+                for sigma in sigmas:
+                    if remaining <= 0:
+                        break
+                    c = src + float(sigma) * torch.randn_like(src)
+                    if c.shape[0] > remaining:
+                        c = c[:remaining]
+                    clones_list.append(c)
+                    remaining -= int(c.shape[0])
+
+            clones = torch.cat(clones_list, dim=0) if clones_list else torch.empty((0,) + keep.shape[1:], device=dev)
+
+            # Children: tournament + blend crossover + mutation.
+            n_child = max(0, N - int(keep.shape[0]) - int(clones.shape[0]))
+            if n_child > 0:
+                sel1 = _tournament_select_batch(loss_total, t_k, n_child)
+                sel2 = _tournament_select_batch(loss_total, t_k, n_child)
+                p1 = pop[sel1]
+                p2 = pop[sel2]
+                child = _make_child(p1, p2, alpha)
+                if mut_p > 0.0 and mut_sigma > 0.0:
+                    msk = (torch.rand((n_child,), device=dev) < float(mut_p))
+                    if bool(msk.any()):
+                        child[msk] = child[msk] + float(mut_sigma) * torch.randn_like(child[msk])
+            else:
+                child = torch.empty((0,) + keep.shape[1:], device=dev)
+
+            pop = torch.cat([keep, clones, child], dim=0)[:N]
+
+    except KeyboardInterrupt:
+        error_msg = "Interrupted by user"
+        print("[GA] Optimization interrupted by user", flush=True)
+    except Exception as e:
+        error_msg = str(e)
+        print(f"[GA] Error during optimization: {e}", flush=True)
+    finally:
+        if fdtd_sched is not None:
+            fdtd_sched.drain()
+        if opt_log_manager is not None:
+            try:
+                opt_log_manager.finalize(
+                    progress_dir=Path(progress_dir),
+                    engine="ga",
+                    success=(error_msg is None),
+                    error_msg=error_msg,
+                )
+                print(f"[LOG] Optimization logging finalized", flush=True)
+            except Exception as e:
+                print(f"[WARN] Error during finalization: {e}", flush=True)
+
+    if error_msg is not None and error_msg != "Interrupted by user":
+        # Only raise for real errors, not interrupts
+        pass  # Continue to return below
 
     return {"progress_dir": str(progress_dir), "gens": gens}

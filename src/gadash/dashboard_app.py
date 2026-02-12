@@ -1287,6 +1287,18 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
                         pass
             rstate_dict.clear()
             active_seeds.clear()
+
+            # Also delete base progress_dir FDTD files (for multi-seed dashboard-level FDTD)
+            try:
+                if progress_dir.exists():
+                    for f in progress_dir.glob("fdtd_rggb_*.npy"):
+                        f.unlink()
+                    for f in progress_dir.glob("fdtd_meta.json"):
+                        f.unlink()
+                    print(f"[DASHBOARD] Cleaned up base FDTD files", file=sys.stderr)
+            except Exception:
+                pass
+
             print(f"[DASHBOARD] Cleared previous run state for new run", file=sys.stderr)
 
         effective_seed = seed if seed is not None else 0
@@ -1302,7 +1314,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         # Create seed-specific progress directory
         seed_progress_dir = _init_seed_dir(progress_dir, effective_seed)
 
-        # Clean up old topk/metrics files unless resuming
+        # Clean up old topk/metrics/FDTD files unless resuming
         if int(resume) != 1:
             try:
                 for f in seed_progress_dir.glob("topk_*.npz"):
@@ -1313,6 +1325,12 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
                     f.unlink()
                 for f in seed_progress_dir.glob("run_meta*.json"):
                     f.unlink()
+                # Also delete FDTD files to prevent stale spectrum data from appearing
+                for f in seed_progress_dir.glob("fdtd_rggb_*.npy"):
+                    f.unlink()
+                for f in seed_progress_dir.glob("fdtd_meta.json"):
+                    f.unlink()
+                print(f"[DASHBOARD] Cleaned up old FDTD files for seed {effective_seed}", file=sys.stderr)
             except Exception:
                 pass  # Best effort cleanup
             # Also clear caches

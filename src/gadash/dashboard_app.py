@@ -327,27 +327,39 @@ def _save_visualization_plots(best_struct: np.ndarray | None, output_dir: Path, 
                     colors = ['red', 'green', 'blue']
                     labels = ['R', 'G', 'B']
 
-                    # Check if surrogate data exists and is compatible
+                    # Check if surrogate data exists and interpolate if needed
                     surrogate_spec = None
                     if surrogate_file.exists():
                         try:
-                            surrogate_spec = np.load(surrogate_file)  # (3, C)
+                            surrogate_spec = np.load(surrogate_file)  # (3, C_surr)
                             print(f"[DEBUG] Loaded surrogate spectrum shape: {surrogate_spec.shape}", file=sys.stderr)
-                            # Ensure surrogate has same channel count as FDTD
+                            # Interpolate surrogate to match FDTD channel count
                             if surrogate_spec.ndim == 2 and surrogate_spec.shape[0] == 3:
-                                if surrogate_spec.shape[1] != C:
-                                    print(f"[DEBUG] Surrogate channel mismatch: {surrogate_spec.shape[1]} vs FDTD {C}", file=sys.stderr)
-                                    surrogate_spec = None  # Skip if mismatch
+                                C_surr = surrogate_spec.shape[1]
+                                if C_surr != C:
+                                    print(f"[DEBUG] Interpolating surrogate from {C_surr} to {C} channels", file=sys.stderr)
+                                    # Interpolate each channel
+                                    from scipy import interpolate
+                                    x_surr = np.linspace(400, 700, C_surr)
+                                    x_fdtd = np.linspace(400, 700, C)
+                                    surrogate_interp = np.zeros((3, C))
+                                    for j in range(3):
+                                        f = interpolate.interp1d(x_surr, surrogate_spec[j], kind='linear', fill_value='extrapolate')
+                                        surrogate_interp[j] = f(x_fdtd)
+                                    surrogate_spec = surrogate_interp
+                                    print(f"[DEBUG] Surrogate interpolation complete: {surrogate_spec.shape}", file=sys.stderr)
                             else:
                                 print(f"[DEBUG] Surrogate shape unexpected: {surrogate_spec.shape}", file=sys.stderr)
                                 surrogate_spec = None
                         except Exception as e:
-                            print(f"[DEBUG] Could not load surrogate: {e}", file=sys.stderr)
+                            print(f"[DEBUG] Could not load/interpolate surrogate: {e}", file=sys.stderr)
+                            import traceback
+                            traceback.print_exc(file=sys.stderr)
                             surrogate_spec = None
 
-                    # Plot FDTD (and surrogate if available and compatible)
+                    # Plot FDTD (and surrogate if available)
                     for i, (color, label) in enumerate(zip(colors, labels)):
-                        if surrogate_spec is not None and surrogate_spec.shape[0] >= 3 and surrogate_spec.shape[1] == C:
+                        if surrogate_spec is not None and surrogate_spec.shape[0] >= 3:
                             ax.plot(wavelengths, surrogate_spec[i], color=color, linestyle='--',
                                    linewidth=2, alpha=0.7, label=f"Surrogate {label}")
                         ax.plot(wavelengths, fdtd_spec[i], color=color, linestyle='-',

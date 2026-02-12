@@ -327,17 +327,27 @@ def _save_visualization_plots(best_struct: np.ndarray | None, output_dir: Path, 
                     colors = ['red', 'green', 'blue']
                     labels = ['R', 'G', 'B']
 
-                    # Check if surrogate data exists
+                    # Check if surrogate data exists and is compatible
                     surrogate_spec = None
                     if surrogate_file.exists():
                         try:
                             surrogate_spec = np.load(surrogate_file)  # (3, C)
-                        except Exception:
-                            pass
+                            print(f"[DEBUG] Loaded surrogate spectrum shape: {surrogate_spec.shape}", file=sys.stderr)
+                            # Ensure surrogate has same channel count as FDTD
+                            if surrogate_spec.ndim == 2 and surrogate_spec.shape[0] == 3:
+                                if surrogate_spec.shape[1] != C:
+                                    print(f"[DEBUG] Surrogate channel mismatch: {surrogate_spec.shape[1]} vs FDTD {C}", file=sys.stderr)
+                                    surrogate_spec = None  # Skip if mismatch
+                            else:
+                                print(f"[DEBUG] Surrogate shape unexpected: {surrogate_spec.shape}", file=sys.stderr)
+                                surrogate_spec = None
+                        except Exception as e:
+                            print(f"[DEBUG] Could not load surrogate: {e}", file=sys.stderr)
+                            surrogate_spec = None
 
-                    # Plot FDTD (and surrogate if available)
+                    # Plot FDTD (and surrogate if available and compatible)
                     for i, (color, label) in enumerate(zip(colors, labels)):
-                        if surrogate_spec is not None and surrogate_spec.shape[0] >= 3:
+                        if surrogate_spec is not None and surrogate_spec.shape[0] >= 3 and surrogate_spec.shape[1] == C:
                             ax.plot(wavelengths, surrogate_spec[i], color=color, linestyle='--',
                                    linewidth=2, alpha=0.7, label=f"Surrogate {label}")
                         ax.plot(wavelengths, fdtd_spec[i], color=color, linestyle='-',

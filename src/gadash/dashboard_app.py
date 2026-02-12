@@ -24,6 +24,9 @@ from fastapi import FastAPI, Query
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 def _merge_rggb_to_rgb(t: torch.Tensor) -> torch.Tensor:
     """Support either RGGB (B,2,2,C) or already-merged RGB (B,3,C)."""
@@ -138,6 +141,226 @@ class RunProcState:
     lines: deque[str] = field(default_factory=lambda: deque(maxlen=400))
     started_ts: str | None = None
     last_exit_code: int | None = None
+
+
+def _collect_and_save_results(seed: int | None, active_seeds: list[int], progress_dir: Path, surrogate=None) -> dict[str, Any]:
+    """Collect optimization results and save to timestamped folder.
+
+    Returns dict with folder path and status.
+    """
+    print(f"[DEBUG] _collect_and_save_results called: seed={seed}, active_seeds={active_seeds}, progress_dir={progress_dir}", file=sys.stderr)
+    try:
+        # Determine which seeds to process
+        seeds_to_process = [seed] if seed is not None else active_seeds
+        if not seeds_to_process:
+            seeds_to_process = [0]
+
+        # Load metadata to get optimizer and generator info
+        meta = _read_meta(progress_dir)
+        optimizer = meta.get("engine", "unknown")
+        gen_backend = meta.get("generator", {}).get("backend", "unknown") if isinstance(meta.get("generator"), dict) else "unknown"
+
+        # Create folder name
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        if len(seeds_to_process) == 1:
+            seed_info = f"seed-{seeds_to_process[0]}"
+        else:
+            seed_info = f"seeds-{'-'.join(map(str, sorted(seeds_to_process)))}"
+
+        folder_name = f"{timestamp}_{optimizer}_{gen_backend}_{seed_info}"
+        output_dir = Path("D:\\optimization_results") / folder_name
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Collect best structure and spectra from all seeds
+        best_struct = None
+        best_loss = float('inf')
+        best_step = None
+        best_seed = None
+        best_idx = None
+        all_structs = []
+        all_surrogate_specs = []
+        all_fdtd_specs = []
+
+        for s in seeds_to_process:
+            seed_dir = progress_dir / f"seed_{s}" if s != 0 else progress_dir
+
+            # Find latest topk file
+            topk_files = sorted(seed_dir.glob("topk_step-*.npz"), key=lambda p: int(p.stem.split("-")[-1]))
+            if not topk_files:
+                continue
+
+            topk_file = topk_files[-1]
+            step = int(topk_file.stem.split("-")[-1])
+            data = np.load(topk_file)
+
+            if "struct128_topk" not in data:
+                continue
+
+            structs = data["struct128_topk"]  # (K, 128, 128)
+            losses = data.get("metric_best_loss", None)
+
+            if losses is not None and len(losses) > 0:
+                local_best_idx = np.argmin(losses)
+                local_best_loss = float(losses[local_best_idx])
+
+                if local_best_loss < best_loss:
+                    best_loss = local_best_loss
+                    best_struct = structs[local_best_idx]
+                    best_step = step
+                    best_seed = s
+                    best_idx = local_best_idx
+
+            all_structs.append(structs)
+
+        # Save best structure
+        if best_struct is not None:
+            struct_file = output_dir / "best_structure_topk.npy"
+            np.save(struct_file, best_struct)
+
+        # Load and save FDTD spectrum
+        fdtd_file = None
+        try:
+            # Try to find FDTD file: first try exact step, then find latest available
+            if best_step is not None:
+                fdtd_file = progress_dir / f"fdtd_rggb_step-{best_step}.npy"
+                print(f"[DEBUG] Looking for FDTD file: {fdtd_file}", file=sys.stderr)
+
+                if not fdtd_file.exists():
+                    # Find latest FDTD file available
+                    fdtd_files = sorted(progress_dir.glob("fdtd_rggb_step-*.npy"),
+                                      key=lambda p: int(p.stem.split("-")[-1]))
+                    if fdtd_files:
+                        fdtd_file = fdtd_files[-1]  # Latest FDTD file
+                        print(f"[DEBUG] Exact step FDTD not found, using latest: {fdtd_file}", file=sys.stderr)
+                    else:
+                        fdtd_file = None
+                        print(f"[DEBUG] No FDTD files found in progress dir", file=sys.stderr)
+
+                if fdtd_file and fdtd_file.exists():
+                    print(f"[DEBUG] FDTD file found, loading...", file=sys.stderr)
+                    fdtd_rggb = np.load(fdtd_file)  # (K, 2, 2, C)
+                    print(f"[DEBUG] FDTD shape: {fdtd_rggb.shape}, ndim: {fdtd_rggb.ndim}", file=sys.stderr)
+                    # Convert to RGB: (K, 3, C)
+                    if fdtd_rggb.ndim == 4:
+                        r = fdtd_rggb[:, 0, 0, :]
+                        g = 0.5 * (fdtd_rggb[:, 0, 1, :] + fdtd_rggb[:, 1, 0, :])
+                        b = fdtd_rggb[:, 1, 1, :]
+                        fdtd_rgb = np.stack([r, g, b], axis=1)
+                        fdtd_spectrum_file = output_dir / "fdtd_spectrum.npy"
+                        np.save(fdtd_spectrum_file, fdtd_rgb)
+                        print(f"[DEBUG] FDTD spectrum saved to {fdtd_spectrum_file}", file=sys.stderr)
+        except Exception as e:
+            print(f"Warning: Could not save FDTD spectrum: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+
+        # Try to generate surrogate spectrum (optional)
+        surrogate_spectrum_file = output_dir / "surrogate_spectrum.npy"
+        try:
+            if best_struct is not None and surrogate is not None:
+                x = torch.from_numpy(best_struct.astype(np.float32))[None, ...]
+                y = surrogate.predict(x)
+                rgb_t = _merge_rggb_to_rgb(y)[0]  # (3, C)
+                np.save(surrogate_spectrum_file, rgb_t.cpu().numpy())
+        except Exception as e:
+            print(f"Warning: Could not generate surrogate spectrum: {e}", file=sys.stderr)
+
+        # Generate visualization plots
+        _save_visualization_plots(best_struct, output_dir, fdtd_file, best_step)
+
+        # Save metadata
+        meta_file = output_dir / "run_meta.json"
+        with meta_file.open("w", encoding="utf-8") as f:
+            json.dump({
+                "optimizer": optimizer,
+                "generator_backend": gen_backend,
+                "best_loss": best_loss if best_loss != float('inf') else None,
+                "best_seed": best_seed,
+                "best_step": best_step,
+                "seeds_processed": sorted(seeds_to_process),
+                "saved_timestamp": datetime.now().isoformat(),
+                **{k: v for k, v in meta.items() if k not in ["ts_start"]}
+            }, f, indent=2)
+
+        return {"ok": True, "folder": str(output_dir), "folder_name": folder_name}
+
+    except Exception as e:
+        import traceback
+        print(f"Failed to collect/save results: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return {"ok": False, "error": str(e)}
+
+
+def _save_visualization_plots(best_struct: np.ndarray | None, output_dir: Path, fdtd_file: Path | None, best_step: int | None) -> None:
+    """Generate and save matplotlib visualization plots."""
+    try:
+        # Structure visualization
+        if best_struct is not None:
+            fig, ax = plt.subplots(figsize=(8, 8), dpi=100)
+            im = ax.imshow(best_struct, cmap="gray", origin="upper")
+            ax.set_title("Optimized Structure")
+            ax.set_xlabel("X (pixels)")
+            ax.set_ylabel("Y (pixels)")
+            plt.colorbar(im, ax=ax, label="Value")
+            struct_plot_file = output_dir / "structure_visualization.png"
+            fig.savefig(struct_plot_file, dpi=100, bbox_inches="tight")
+            plt.close(fig)
+
+        # Spectrum plot (FDTD only, or surrogate+FDTD comparison if available)
+        surrogate_file = output_dir / "surrogate_spectrum.npy"
+        fdtd_rgb_file = output_dir / "fdtd_spectrum.npy"
+
+        if fdtd_rgb_file.exists():
+            try:
+                fdtd_spec = np.load(fdtd_rgb_file)  # Can be (3, C) or (K, 3, C)
+                print(f"[DEBUG] Loaded FDTD spectrum shape: {fdtd_spec.shape}, ndim: {fdtd_spec.ndim}", file=sys.stderr)
+
+                # Ensure we have (3, C) format
+                if fdtd_spec.ndim == 3:  # (K, 3, C)
+                    fdtd_spec = fdtd_spec[0]  # Use first K element: (3, C)
+
+                if fdtd_spec.ndim == 2 and fdtd_spec.shape[0] == 3:  # (3, C)
+                    C = fdtd_spec.shape[1]
+                    wavelengths = np.linspace(400, 700, C)
+
+                    fig, ax = plt.subplots(figsize=(12, 6), dpi=100)
+                    colors = ['red', 'green', 'blue']
+                    labels = ['R', 'G', 'B']
+
+                    # Check if surrogate data exists
+                    surrogate_spec = None
+                    if surrogate_file.exists():
+                        try:
+                            surrogate_spec = np.load(surrogate_file)  # (3, C)
+                        except Exception:
+                            pass
+
+                    # Plot FDTD (and surrogate if available)
+                    for i, (color, label) in enumerate(zip(colors, labels)):
+                        if surrogate_spec is not None and surrogate_spec.shape[0] >= 3:
+                            ax.plot(wavelengths, surrogate_spec[i], color=color, linestyle='--',
+                                   linewidth=2, alpha=0.7, label=f"Surrogate {label}")
+                        ax.plot(wavelengths, fdtd_spec[i], color=color, linestyle='-',
+                               linewidth=2.5, alpha=0.9, label=f"FDTD {label}")
+
+                    ax.set_xlabel("Wavelength (nm)", fontsize=12)
+                    ax.set_ylabel("Intensity", fontsize=12)
+                    title = "Spectrum: FDTD Verification" if surrogate_spec is None else "Spectrum Comparison: Surrogate vs FDTD"
+                    ax.set_title(title)
+                    ax.legend(loc="best", fontsize=10)
+                    ax.grid(True, alpha=0.3)
+
+                    spectrum_plot_file = output_dir / "spectrum_comparison.png"
+                    fig.savefig(spectrum_plot_file, dpi=100, bbox_inches="tight")
+                    plt.close(fig)
+                    print(f"[DEBUG] Spectrum plot saved to {spectrum_plot_file}", file=sys.stderr)
+            except Exception as e:
+                print(f"Warning: Could not generate spectrum plot: {e}", file=sys.stderr)
+                import traceback
+                traceback.print_exc(file=sys.stderr)
+
+    except Exception as e:
+        print(f"Warning: Could not generate visualizations: {e}", file=sys.stderr)
 
 
 class DashboardFDTDScheduler:
@@ -1253,11 +1476,33 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
 
     @app.post("/api/run/stop")
     def run_stop(seed: int | None = Query(default=None)) -> JSONResponse:
-        """Stop running process(es).
+        """Stop running process(es) and save logs to D:\\optimization_log.
 
         seed=None → stop ALL running seeds.
         seed=N → stop only seed N.
         """
+        def _save_log(s: int, rs: RunProcState) -> None:
+            """Save log for a single seed to D:\\optimization_log."""
+            try:
+                log_dir = Path("D:\\optimization_log")
+                log_dir.mkdir(parents=True, exist_ok=True)
+
+                # Create timestamp for unique log file
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                log_file = log_dir / f"seed_{s}_{timestamp}.log"
+
+                # Write log content
+                with log_file.open("w", encoding="utf-8") as f:
+                    f.write(f"=== Log for seed {s} ===\n")
+                    f.write(f"Started: {rs.started_ts}\n")
+                    f.write(f"Exit code: {rs.last_exit_code}\n")
+                    f.write(f"Stopped at: {datetime.now().isoformat()}\n")
+                    f.write("\n--- Process output ---\n")
+                    for line in rs.lines:
+                        f.write(line + "\n")
+            except Exception as e:
+                print(f"Failed to save log for seed {s}: {e}", file=sys.stderr)
+
         if seed is not None:
             rs = rstate_dict.get(seed)
             if rs is None or rs.proc is None or rs.proc.poll() is not None:
@@ -1275,7 +1520,14 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
                 code = rs.proc.poll()
                 rs.last_exit_code = code
                 rs.lines.append(f"[dashboard] stopped (exit={code})")
-                return JSONResponse({"ok": True, "stopped": True, "seed": seed, "exit_code": code})
+
+                # Save log to file
+                _save_log(seed, rs)
+
+                # Collect and save optimization results
+                result_info = _collect_and_save_results(seed, active_seeds, progress_dir, surrogate)
+
+                return JSONResponse({"ok": True, "stopped": True, "seed": seed, "exit_code": code, **result_info})
             except Exception as e:
                 return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
@@ -1299,12 +1551,19 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
                 rs.last_exit_code = code
                 rs.lines.append(f"[dashboard] stopped (exit={code})")
                 stopped_seeds.append(s)
+
+                # Save log to file
+                _save_log(s, rs)
             except Exception:
                 pass
 
         if not stopped_seeds:
             return JSONResponse({"ok": True, "stopped": False, "error": "no running processes"})
-        return JSONResponse({"ok": True, "stopped": True, "stopped_seeds": stopped_seeds})
+
+        # Collect and save optimization results for all stopped seeds
+        result_info = _collect_and_save_results(None, stopped_seeds, progress_dir, surrogate)
+
+        return JSONResponse({"ok": True, "stopped": True, "stopped_seeds": stopped_seeds, **result_info})
 
     @app.post("/api/run/reset")
     def run_reset(seed: int | None = Query(default=None)) -> JSONResponse:

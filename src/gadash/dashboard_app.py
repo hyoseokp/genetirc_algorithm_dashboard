@@ -1260,6 +1260,21 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         Each seed runs in its own progress subdirectory (seed=0 or None → base dir).
         Multiple seeds can run in parallel without file conflicts.
         """
+        # When resume=0 (new run), clear previous seeds from dashboard state
+        # This prevents old graphs from appearing when changing number of parallel runs
+        if int(resume) != 1:
+            # Clear rstate_dict and active_seeds for fresh start
+            for s in list(rstate_dict.keys()):
+                rs = rstate_dict[s]
+                if rs.proc is not None:
+                    try:
+                        rs.proc.terminate()
+                    except Exception:
+                        pass
+            rstate_dict.clear()
+            active_seeds.clear()
+            print(f"[DASHBOARD] Cleared previous run state for new run", file=sys.stderr)
+
         effective_seed = seed if seed is not None else 0
 
         # Check if this specific seed is already running

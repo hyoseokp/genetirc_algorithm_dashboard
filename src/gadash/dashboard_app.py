@@ -240,12 +240,16 @@ def _collect_and_save_results(seed: int | None, active_seeds: list[int], progres
                     print(f"[DEBUG] FDTD file found, loading...", file=sys.stderr)
                     fdtd_rggb = np.load(fdtd_file)  # (K, 2, 2, C)
                     print(f"[DEBUG] FDTD shape: {fdtd_rggb.shape}, ndim: {fdtd_rggb.ndim}", file=sys.stderr)
+                    print(f"[DEBUG] FDTD range: min={fdtd_rggb.min():.6f}, max={fdtd_rggb.max():.6f}", file=sys.stderr)
                     # Convert to RGB: (K, 3, C)
                     if fdtd_rggb.ndim == 4:
                         r = fdtd_rggb[:, 0, 0, :]
                         g = 0.5 * (fdtd_rggb[:, 0, 1, :] + fdtd_rggb[:, 1, 0, :])
                         b = fdtd_rggb[:, 1, 1, :]
                         fdtd_rgb = np.stack([r, g, b], axis=1)
+                        # Take absolute value to ensure positive spectrum
+                        fdtd_rgb = np.abs(fdtd_rgb)
+                        print(f"[DEBUG] FDTD RGB range after abs: min={fdtd_rgb.min():.6f}, max={fdtd_rgb.max():.6f}", file=sys.stderr)
                         fdtd_spectrum_file = output_dir / "fdtd_spectrum.npy"
                         np.save(fdtd_spectrum_file, fdtd_rgb)
                         print(f"[DEBUG] FDTD spectrum saved to {fdtd_spectrum_file}", file=sys.stderr)
@@ -261,9 +265,16 @@ def _collect_and_save_results(seed: int | None, active_seeds: list[int], progres
                 x = torch.from_numpy(best_struct.astype(np.float32))[None, ...]
                 y = surrogate.predict(x)
                 rgb_t = _merge_rggb_to_rgb(y)[0]  # (3, C)
-                np.save(surrogate_spectrum_file, rgb_t.cpu().numpy())
+                rgb_np = rgb_t.cpu().numpy()
+                # Take absolute value to ensure positive spectrum
+                rgb_np = np.abs(rgb_np)
+                print(f"[DEBUG] Surrogate spectrum range: min={rgb_np.min():.6f}, max={rgb_np.max():.6f}", file=sys.stderr)
+                np.save(surrogate_spectrum_file, rgb_np)
+                print(f"[DEBUG] Surrogate spectrum saved to {surrogate_spectrum_file}", file=sys.stderr)
         except Exception as e:
             print(f"Warning: Could not generate surrogate spectrum: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
 
         # Generate visualization plots
         _save_visualization_plots(best_struct, output_dir, fdtd_file, best_step)
@@ -333,10 +344,11 @@ def _save_visualization_plots(best_struct: np.ndarray | None, output_dir: Path, 
 
                     # Check if surrogate data exists and interpolate if needed
                     surrogate_spec = None
+                    print(f"[DEBUG] Surrogate file exists: {surrogate_file.exists()}", file=sys.stderr)
                     if surrogate_file.exists():
                         try:
                             surrogate_spec = np.load(surrogate_file)  # (3, C_surr)
-                            print(f"[DEBUG] Loaded surrogate spectrum shape: {surrogate_spec.shape}", file=sys.stderr)
+                            print(f"[DEBUG] Loaded surrogate spectrum shape: {surrogate_spec.shape}, ndim: {surrogate_spec.ndim}", file=sys.stderr)
                             print(f"[DEBUG] Surrogate spectrum range before processing: min={surrogate_spec.min():.6f}, max={surrogate_spec.max():.6f}", file=sys.stderr)
 
                             # Interpolate surrogate to match FDTD channel count

@@ -217,11 +217,11 @@ def _collect_and_save_results(seed: int | None, active_seeds: list[int], progres
         output_dir = Path("D:\\optimization_results") / folder_name
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Collect best structure from all seeds
+        # Collect structure for surrogate at the latest available topk step.
         best_struct = None
         best_loss = float('inf')
-        best_step = None
-        best_seed = None
+        surrogate_step_used = None
+        surrogate_seed_used = None
 
         for s in seeds_to_process:
             seed_dir = progress_dir / f"seed_{s}" if s != 0 else progress_dir
@@ -240,16 +240,24 @@ def _collect_and_save_results(seed: int | None, active_seeds: list[int], progres
 
             structs = data["struct128_topk"]  # (K, 128, 128)
             losses = data.get("metric_best_loss", None)
-
+            local_best_idx = 0
+            local_best_loss = float("inf")
             if losses is not None and len(losses) > 0:
-                local_best_idx = np.argmin(losses)
+                local_best_idx = int(np.argmin(losses))
                 local_best_loss = float(losses[local_best_idx])
 
-                if local_best_loss < best_loss:
-                    best_loss = local_best_loss
-                    best_struct = structs[local_best_idx]
-                    best_step = step
-                    best_seed = s
+            # Priority:
+            # 1) latest step wins,
+            # 2) within same latest step, lower loss wins.
+            if (
+                surrogate_step_used is None
+                or int(step) > int(surrogate_step_used)
+                or (int(step) == int(surrogate_step_used) and local_best_loss < best_loss)
+            ):
+                best_loss = local_best_loss
+                best_struct = structs[local_best_idx]
+                surrogate_step_used = int(step)
+                surrogate_seed_used = int(s)
 
         # Save best structure
         if best_struct is not None:
@@ -260,66 +268,61 @@ def _collect_and_save_results(seed: int | None, active_seeds: list[int], progres
         fdtd_file = None
         fdtd_step_used = None
         try:
-            if best_step is not None:
-                fdtd_search_dirs: list[Path] = []
+            fdtd_search_dirs: list[Path] = []
 
-                # Prefer the seed directory that produced the best structure.
-                if best_seed is not None and int(best_seed) != 0:
-                    fdtd_search_dirs.append(progress_dir / f"seed_{int(best_seed)}")
+            # Prefer the seed directory that produced surrogate snapshot.
+            if surrogate_seed_used is not None and int(surrogate_seed_used) != 0:
+                fdtd_search_dirs.append(progress_dir / f"seed_{int(surrogate_seed_used)}")
 
-                # Dashboard-level FDTD artifacts are saved in base progress_dir.
-                fdtd_search_dirs.append(progress_dir)
+            # Dashboard-level FDTD artifacts are saved in base progress_dir.
+            fdtd_search_dirs.append(progress_dir)
 
-                # For robustness, also scan all processed seed dirs.
-                for s in seeds_to_process:
-                    if int(s) == 0:
+            # For robustness, also scan all processed seed dirs.
+            for s in seeds_to_process:
+                if int(s) == 0:
+                    continue
+                fdtd_search_dirs.append(progress_dir / f"seed_{int(s)}")
+
+            # Keep order, remove duplicates.
+            uniq_dirs: list[Path] = []
+            seen: set[str] = set()
+            for p in fdtd_search_dirs:
+                k = str(p)
+                if k in seen:
+                    continue
+                seen.add(k)
+                uniq_dirs.append(p)
+
+            # Pick latest available FDTD step (independent of surrogate step).
+            found: list[tuple[int, int, Path]] = []  # (step, dir_priority, path)
+            for idx, d in enumerate(uniq_dirs):
+                if not d.exists():
+                    continue
+                for p in d.glob("fdtd_rggb_step-*.npy"):
+                    m = _FDTD_RE.match(p.name)
+                    if m is None:
                         continue
-                    fdtd_search_dirs.append(progress_dir / f"seed_{int(s)}")
-
-                # Keep order, remove duplicates.
-                uniq_dirs: list[Path] = []
-                seen: set[str] = set()
-                for p in fdtd_search_dirs:
-                    k = str(p)
-                    if k in seen:
+                    try:
+                        s = int(m.group(1))
+                    except Exception:
                         continue
-                    seen.add(k)
-                    uniq_dirs.append(p)
+                    found.append((s, idx, p))
 
-                # Pick best available FDTD step:
-                # 1) highest step <= best_step (preferred),
-                # 2) otherwise highest available step.
-                found: list[tuple[int, int, Path]] = []  # (step, dir_priority, path)
-                for idx, d in enumerate(uniq_dirs):
-                    if not d.exists():
-                        continue
-                    for p in d.glob("fdtd_rggb_step-*.npy"):
-                        m = _FDTD_RE.match(p.name)
-                        if m is None:
-                            continue
-                        try:
-                            s = int(m.group(1))
-                        except Exception:
-                            continue
-                        found.append((s, idx, p))
+            if found:
+                # Sort by step desc, then preferred directory order.
+                found.sort(key=lambda x: (-x[0], x[1]))
+                fdtd_step_used, _, fdtd_file = found[0]
 
-                if found:
-                    le = [x for x in found if x[0] <= int(best_step)]
-                    pool = le if le else found
-                    # Sort by step desc, then preferred directory order.
-                    pool.sort(key=lambda x: (-x[0], x[1]))
-                    fdtd_step_used, _, fdtd_file = pool[0]
-
-                if fdtd_file is not None:
-                    fdtd_rggb = np.load(fdtd_file)  # (K, 2, 2, C)
-                    # Convert to RGB: (K, 3, C)
-                    if fdtd_rggb.ndim == 4:
-                        r = fdtd_rggb[:, 0, 0, :]
-                        g = 0.5 * (fdtd_rggb[:, 0, 1, :] + fdtd_rggb[:, 1, 0, :])
-                        b = fdtd_rggb[:, 1, 1, :]
-                        fdtd_rgb = np.stack([r, g, b], axis=1)
-                        fdtd_spectrum_file = output_dir / "fdtd_spectrum.npy"
-                        np.save(fdtd_spectrum_file, fdtd_rgb)
+            if fdtd_file is not None:
+                fdtd_rggb = np.load(fdtd_file)  # (K, 2, 2, C)
+                # Convert to RGB: (K, 3, C)
+                if fdtd_rggb.ndim == 4:
+                    r = fdtd_rggb[:, 0, 0, :]
+                    g = 0.5 * (fdtd_rggb[:, 0, 1, :] + fdtd_rggb[:, 1, 0, :])
+                    b = fdtd_rggb[:, 1, 1, :]
+                    fdtd_rgb = np.stack([r, g, b], axis=1)
+                    fdtd_spectrum_file = output_dir / "fdtd_spectrum.npy"
+                    np.save(fdtd_spectrum_file, fdtd_rgb)
         except Exception as e:
             print(f"Warning: Could not save FDTD spectrum: {e}", file=sys.stderr)
 
@@ -344,8 +347,9 @@ def _collect_and_save_results(seed: int | None, active_seeds: list[int], progres
                 "optimizer": optimizer,
                 "generator_backend": gen_backend,
                 "best_loss": best_loss if best_loss != float('inf') else None,
-                "best_seed": best_seed,
-                "best_step": best_step,
+                "best_seed": surrogate_seed_used,
+                "best_step": surrogate_step_used,
+                "surrogate_step_used": surrogate_step_used,
                 "fdtd_step_used": fdtd_step_used,
                 "seeds_processed": sorted(seeds_to_process),
                 "saved_timestamp": datetime.now().isoformat(),

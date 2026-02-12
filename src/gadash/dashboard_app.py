@@ -210,38 +210,57 @@ def _collect_and_save_results(seed: int | None, active_seeds: list[int], progres
 
         # Load and save FDTD spectrum
         fdtd_file = None
+        fdtd_step_used = None
         try:
             if best_step is not None:
-                fdtd_name = f"fdtd_rggb_step-{best_step}.npy"
-                fdtd_candidates: list[Path] = []
+                fdtd_search_dirs: list[Path] = []
 
                 # Prefer the seed directory that produced the best structure.
                 if best_seed is not None and int(best_seed) != 0:
-                    fdtd_candidates.append(progress_dir / f"seed_{int(best_seed)}" / fdtd_name)
+                    fdtd_search_dirs.append(progress_dir / f"seed_{int(best_seed)}")
 
                 # Dashboard-level FDTD artifacts are saved in base progress_dir.
-                fdtd_candidates.append(progress_dir / fdtd_name)
+                fdtd_search_dirs.append(progress_dir)
 
                 # For robustness, also scan all processed seed dirs.
                 for s in seeds_to_process:
                     if int(s) == 0:
                         continue
-                    fdtd_candidates.append(progress_dir / f"seed_{int(s)}" / fdtd_name)
+                    fdtd_search_dirs.append(progress_dir / f"seed_{int(s)}")
 
                 # Keep order, remove duplicates.
-                uniq_candidates: list[Path] = []
+                uniq_dirs: list[Path] = []
                 seen: set[str] = set()
-                for p in fdtd_candidates:
+                for p in fdtd_search_dirs:
                     k = str(p)
                     if k in seen:
                         continue
                     seen.add(k)
-                    uniq_candidates.append(p)
+                    uniq_dirs.append(p)
 
-                for cand in uniq_candidates:
-                    if cand.exists():
-                        fdtd_file = cand
-                        break
+                # Pick best available FDTD step:
+                # 1) highest step <= best_step (preferred),
+                # 2) otherwise highest available step.
+                found: list[tuple[int, int, Path]] = []  # (step, dir_priority, path)
+                for idx, d in enumerate(uniq_dirs):
+                    if not d.exists():
+                        continue
+                    for p in d.glob("fdtd_rggb_step-*.npy"):
+                        m = _FDTD_RE.match(p.name)
+                        if m is None:
+                            continue
+                        try:
+                            s = int(m.group(1))
+                        except Exception:
+                            continue
+                        found.append((s, idx, p))
+
+                if found:
+                    le = [x for x in found if x[0] <= int(best_step)]
+                    pool = le if le else found
+                    # Sort by step desc, then preferred directory order.
+                    pool.sort(key=lambda x: (-x[0], x[1]))
+                    fdtd_step_used, _, fdtd_file = pool[0]
 
                 if fdtd_file is not None:
                     fdtd_rggb = np.load(fdtd_file)  # (K, 2, 2, C)
@@ -279,6 +298,7 @@ def _collect_and_save_results(seed: int | None, active_seeds: list[int], progres
                 "best_loss": best_loss if best_loss != float('inf') else None,
                 "best_seed": best_seed,
                 "best_step": best_step,
+                "fdtd_step_used": fdtd_step_used,
                 "seeds_processed": sorted(seeds_to_process),
                 "saved_timestamp": datetime.now().isoformat(),
                 **{k: v for k, v in meta.items() if k not in ["ts_start"]}

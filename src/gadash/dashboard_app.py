@@ -1005,9 +1005,55 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
     @app.get("/api/topk/latest")
     def topk_latest(
         mode: str = Query(default="best"),
+        view: str = Query(default="total"),
         seed: int | None = Query(default=None),
     ) -> JSONResponse:
+        view_norm = str(view or "total").lower()
+        if view_norm not in ("total", "each"):
+            view_norm = "total"
         has_multiple_seeds = len(_discover_seed_dirs()) > 1
+
+        if view_norm == "each":
+            groups: list[dict[str, Any]] = []
+            for s, pdir in _discover_seed_dirs():
+                step = _latest_topk_step_in(pdir, mode=mode)
+                if step is None:
+                    continue
+                try:
+                    data = _load_topk_from(pdir, step, mode=mode)
+                except Exception:
+                    continue
+                struct = data.get("struct128_topk")
+                k = int(struct.shape[0]) if isinstance(struct, np.ndarray) and struct.ndim == 3 else 0
+                if k <= 0:
+                    continue
+                metrics_out: dict[str, Any] = {}
+                for mkey, arr in data.items():
+                    if mkey.startswith("metric_"):
+                        metrics_out[mkey] = arr.tolist()
+                fill = [float(struct[i].mean()) for i in range(k)] if isinstance(struct, np.ndarray) and struct.ndim == 3 else []
+                seed_q = "" if int(s) == 0 else f"&seed={int(s)}"
+                groups.append(
+                    {
+                        "seed": int(s),
+                        "step": int(step),
+                        "k": int(k),
+                        "mode": "cur" if str(mode).lower() == "cur" else "best",
+                        "images": [f"/api/topk/{int(step)}/{i}.png?mode=best{seed_q}" for i in range(k)],
+                        "metrics": metrics_out,
+                        "fill_frac": fill,
+                    }
+                )
+            groups.sort(key=lambda x: int(x.get("seed", 0)))
+            return JSONResponse(
+                _json_sanitize(
+                    {
+                        "view": "each",
+                        "groups": groups,
+                        "num_seeds": len(groups),
+                    }
+                )
+            )
 
         # If seed specified, or only single seed exists, use single-seed path
         if seed is not None or not has_multiple_seeds:
@@ -1033,6 +1079,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
             return JSONResponse(
                 _json_sanitize(
                     {
+                        "view": "total",
                         "step": int(step),
                         "k": k,
                         "mode": mode_str,
@@ -1068,6 +1115,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         return JSONResponse(
             _json_sanitize(
                 {
+                    "view": "total",
                     "step": max_step,
                     "k": k,
                     "mode": mode_str,

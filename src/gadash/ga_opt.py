@@ -63,6 +63,17 @@ def load_finetune_dataset(dataset_path: Path) -> tuple[np.ndarray, np.ndarray] |
         if spectrum_fdtd.ndim != 4:
             print(f"[WARN] spectrum_fdtd has unexpected shape {spectrum_fdtd.shape}, expected (N,2,2,C)", flush=True)
             return None
+        if struct_list.ndim != 3:
+            print(f"[WARN] struct_list has unexpected shape {struct_list.shape}, expected (N,128,128)", flush=True)
+            return None
+        if struct_list.shape[0] != spectrum_fdtd.shape[0]:
+            print(
+                f"[WARN] fine-tuning dataset count mismatch: "
+                f"struct={struct_list.shape[0]} spec={spectrum_fdtd.shape[0]}; "
+                f"rejecting dataset load",
+                flush=True,
+            )
+            return None
         return struct_list, spectrum_fdtd
     except Exception as e:
         print(f"[WARN] failed to load fine-tuning dataset {dataset_path}: {e}", flush=True)
@@ -95,7 +106,18 @@ def save_finetune_data(
         fdtd_rggb = np.load(fdtd_rggb_npy, allow_pickle=False)  # (K,2,2,C)
         if fdtd_rggb.ndim != 4 or fdtd_rggb.shape[1:3] != (2, 2):
             raise ValueError(f"expected fdtd_rggb (K,2,2,C), got {fdtd_rggb.shape}")
-        K = struct_topk.shape[0]
+        # Strict pair contract: both sides must have identical K for this step.
+        k_struct = int(struct_topk.shape[0])
+        k_fdtd = int(fdtd_rggb.shape[0])
+        if k_struct <= 0 or k_fdtd <= 0:
+            raise ValueError(f"no samples to save (struct={k_struct}, fdtd={k_fdtd})")
+        if k_struct != k_fdtd:
+            print(
+                f"[WARN] topk/fdtd K mismatch at step {step}: struct={k_struct}, fdtd={k_fdtd}; "
+                f"discarding this step (no write)",
+                flush=True,
+            )
+            return
 
         # Load existing dataset if available
         existing = load_finetune_dataset(dataset_path)
@@ -107,15 +129,17 @@ def save_finetune_data(
             struct_list = struct_topk
             spectrum_fdtd = fdtd_rggb
 
-        # Save cumulative dataset
+        # Save cumulative dataset atomically
         dataset_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = dataset_path.with_suffix(".tmp.npz")
         np.savez_compressed(
-            dataset_path,
+            tmp_path,
             struct_list=struct_list.astype(np.uint8),
             spectrum_fdtd=spectrum_fdtd.astype(np.float32),
         )
+        tmp_path.replace(dataset_path)
 
-        total_count = struct_list.shape[0]
+        total_count = int(struct_list.shape[0])
         print(f"[OK] fine-tuning dataset updated (step {step}): total {total_count} samples -> {dataset_path}", flush=True)
     except Exception as e:
         print(f"[WARN] failed to save fine-tuning data (step {step}): {e}", flush=True)

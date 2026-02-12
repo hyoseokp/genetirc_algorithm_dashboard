@@ -238,6 +238,8 @@
       .thumb.sel { outline: 2px solid var(--accent); }
       .thumb img { width: 100%; border-radius: 8px; image-rendering: pixelated; display: block; }
       .cap { font-size: 11px; color: #64748b; margin-top: 6px; }
+      .seedGroup { margin-top: 12px; }
+      .seedGroupTitle { font-size: 12px; color: #475569; font-weight: 700; margin: 2px 0 6px 2px; }
       .hint { font-size: 11px; color: #64748b; margin-top: 6px; }
       .purityBox {
         margin-top: 10px;
@@ -541,8 +543,8 @@
           <div class="row" style="gap:8px">
               <div class="kpi">Mode</div>
               <div class="segmented" id="topkModeToggle">
-                <button class="seg-btn" data-topk_mode="best">Best</button>
-                <button class="seg-btn" data-topk_mode="cur">Current</button>
+                <button class="seg-btn" data-topk_view="total">Total Best</button>
+                <button class="seg-btn" data-topk_view="each">Each Best</button>
               </div>
               <div class="toggleRow" style="height:32px;padding:6px 10px">
                 <div class="kpi"><b>Invert</b></div>
@@ -645,9 +647,12 @@
         window: localStorage.getItem('loss_window') || 'all',
         fdtd: (localStorage.getItem('fdtd_verify') || 'off'),
         dryrun: (localStorage.getItem('dry_run') || 'off'),
-        topk_mode: (localStorage.getItem('topk_mode') || 'best'),
+        topk_view: (localStorage.getItem('topk_view') || (() => {
+          const old = localStorage.getItem('topk_mode') || 'best';
+          return old === 'cur' ? 'each' : 'total';
+        })()),
         invert_view: (localStorage.getItem('invert_view') || 'on'),
-        selected: {step:null, idx:0},
+        selected: {step:null, idx:0, seed:null},
         lastTopkKey: ''
       };
 
@@ -660,7 +665,7 @@
           b.addEventListener('click', () => {
             ui[key] = b.dataset[key];
             if (key === 'scale' || key === 'window') localStorage.setItem('loss_' + key, ui[key]);
-            if (key === 'topk_mode') localStorage.setItem('topk_mode', ui[key]);
+            if (key === 'topk_view') localStorage.setItem('topk_view', ui[key]);
             sync();
             redraw();
           });
@@ -1060,60 +1065,103 @@
           }
         } catch(e) { /* ignore */ }
 
-        // TopK (multi-seed aware)
+        // TopK (total best / each best)
         try{
-          const t = await fetchJSON(`/api/topk/latest?mode=${encodeURIComponent(ui.topk_mode)}`);
-          if (t.step == null) {
-            kpiTopk.textContent = '(no snapshot)';
-            thumbs.innerHTML = '';
-            topkHint.textContent = '';
-            return;
-          }
-          const isMerged = !!t.merged;
-          const seedOrigins = t.seed_origins || [];
-          const seedSteps = t.seed_steps || {};
-          const nSeeds = Object.keys(seedSteps).length;
-          const key = String(t.mode||ui.topk_mode) + ':' + String(t.step) + ':' + String(t.k) + ':' + (isMerged ? 'merged' : 'single');
-
-          if (isMerged) {
-            kpiTopk.textContent = `(merged ${nSeeds} seeds, K=${t.k}, mode=${t.mode||ui.topk_mode})`;
+          const t = await fetchJSON(`/api/topk/latest?mode=best&view=${encodeURIComponent(ui.topk_view)}`);
+          const isEachView = (t.view === 'each');
+          if (isEachView) {
+            const groups = t.groups || [];
+            if (!groups.length) {
+              kpiTopk.textContent = '(no snapshot)';
+              thumbs.innerHTML = '';
+              topkHint.textContent = '';
+              return;
+            }
+            const perSeedK = Math.max(1, Math.min(8, groups.length));
+            const key = `each:${groups.map(g => `${g.seed}:${g.step}:${g.k}`).join('|')}:${perSeedK}`;
+            kpiTopk.textContent = `(each best, seeds=${groups.length}, per-seed K=${perSeedK})`;
+            if (key !== ui.lastTopkKey) {
+              ui.lastTopkKey = key;
+              ui._lastMergedTopk = null;
+              let html = '';
+              let autoStep = null;
+              let autoSeed = null;
+              for (const g of groups) {
+                const seed = Number(g.seed);
+                const imgs = g.images || [];
+                const fill = g.fill_frac || [];
+                const best = (g.metrics && g.metrics.metric_best_loss) ? g.metrics.metric_best_loss : null;
+                const maxShow = Math.min(imgs.length, perSeedK);
+                html += `<div class="seedGroup"><div class="seedGroupTitle">seed=${seed}  step=${g.step}</div><div class="thumbs">`;
+                for (let i=0;i<maxShow;i++){
+                  const inv = (ui.invert_view === 'on');
+                  const src = withCacheBust(imgs[i], `${g.step}-${seed}`, inv);
+                  const cap = [
+                    best && best[i]!=null ? `best_loss=${Number(best[i]).toFixed(6)}` : null,
+                    fill && fill[i]!=null ? `fill=${Number(fill[i]).toFixed(3)}` : null
+                  ].filter(Boolean).join('  ') || `k=${i}`;
+                  html += `<div class="thumb" data-step="${g.step}" data-idx="${i}" data-seed="${seed}" data-merged="0"><img src="${src}" onerror="this.closest('.thumb').classList.add('err'); this.alt='image failed';" /><div class="cap">${cap}</div></div>`;
+                }
+                html += `</div></div>`;
+                if (autoStep == null && maxShow > 0) {
+                  autoStep = Number(g.step);
+                  autoSeed = seed;
+                }
+              }
+              thumbs.innerHTML = html;
+              topkHint.textContent = 'each seed best — click a thumb to plot spectrum';
+              if (autoStep != null) {
+                ui.selected.step = autoStep;
+                ui.selected.idx = 0;
+                ui.selected.seed = autoSeed;
+                await loadSpectrum(autoStep, 0, autoSeed);
+              }
+            }
           } else {
-            kpiTopk.textContent = `(step ${t.step}, K=${t.k}, mode=${t.mode||ui.topk_mode})`;
-          }
-
-          if (key !== ui.lastTopkKey) {
-            ui.lastTopkKey = key;
-            // Store merged data for spectrum lookup if merged
-            ui._lastMergedTopk = isMerged ? t : null;
-            const imgs = t.images || [];
-            const fill = t.fill_frac || [];
-            const best = (t.metrics && t.metrics.metric_best_loss) ? t.metrics.metric_best_loss : null;
-            const cur = (t.metrics && t.metrics.metric_cur_loss) ? t.metrics.metric_cur_loss : null;
-            let html = '';
-            const maxShow = Math.min(imgs.length, 8);
-            for (let i=0;i<maxShow;i++){
-              const inv = (ui.invert_view === 'on');
-              const src = withCacheBust(imgs[i], t.step, inv);
-              const seedLabel = (isMerged && seedOrigins[i] != null) ? `seed=${seedOrigins[i]}  ` : '';
-              const cap = [
-                seedLabel ? seedLabel : null,
-                (ui.topk_mode === 'cur') && cur && cur[i]!=null ? `cur_loss=${Number(cur[i]).toFixed(6)}` : null,
-                (ui.topk_mode !== 'cur') && best && best[i]!=null ? `best_loss=${Number(best[i]).toFixed(6)}` : null,
-                fill && fill[i]!=null ? `fill=${Number(fill[i]).toFixed(3)}` : null
-              ].filter(Boolean).join('  ') || `k=${i}`;
-              html += `<div class="thumb" data-step="${t.step}" data-idx="${i}" data-merged="${isMerged?1:0}"><img src="${src}" onerror="this.closest('.thumb').classList.add('err'); this.alt='image failed';" /><div class="cap">${cap}</div></div>`;
+            if (t.step == null) {
+              kpiTopk.textContent = '(no snapshot)';
+              thumbs.innerHTML = '';
+              topkHint.textContent = '';
+              return;
             }
-            thumbs.innerHTML = html;
+            const isMerged = !!t.merged;
+            const seedOrigins = t.seed_origins || [];
+            const seedSteps = t.seed_steps || {};
+            const nSeeds = Object.keys(seedSteps).length;
+            const key = `total:${String(t.step)}:${String(t.k)}:${isMerged ? 'merged' : 'single'}`;
             if (isMerged) {
-              topkHint.textContent = `best from ${nSeeds} seeds — click a thumb to plot spectrum`;
+              kpiTopk.textContent = `(total best, merged ${nSeeds} seeds, K=${t.k})`;
             } else {
-              topkHint.textContent = 'click a thumb to plot spectrum';
+              kpiTopk.textContent = `(total best, step ${t.step}, K=${t.k})`;
             }
-
-            // auto-select k=0
-            ui.selected.step = t.step;
-            ui.selected.idx = 0;
-            await loadSpectrum(t.step, 0);
+            if (key !== ui.lastTopkKey) {
+              ui.lastTopkKey = key;
+              ui._lastMergedTopk = isMerged ? t : null;
+              const imgs = t.images || [];
+              const fill = t.fill_frac || [];
+              const best = (t.metrics && t.metrics.metric_best_loss) ? t.metrics.metric_best_loss : null;
+              let html = '';
+              const maxShow = Math.min(imgs.length, 8);
+              for (let i=0;i<maxShow;i++){
+                const inv = (ui.invert_view === 'on');
+                const src = withCacheBust(imgs[i], t.step, inv);
+                const seedLabel = (isMerged && seedOrigins[i] != null) ? `seed=${seedOrigins[i]}  ` : '';
+                const cap = [
+                  seedLabel ? seedLabel : null,
+                  best && best[i]!=null ? `best_loss=${Number(best[i]).toFixed(6)}` : null,
+                  fill && fill[i]!=null ? `fill=${Number(fill[i]).toFixed(3)}` : null
+                ].filter(Boolean).join('  ') || `k=${i}`;
+                html += `<div class="thumb" data-step="${t.step}" data-idx="${i}" data-merged="${isMerged?1:0}"><img src="${src}" onerror="this.closest('.thumb').classList.add('err'); this.alt='image failed';" /><div class="cap">${cap}</div></div>`;
+              }
+              thumbs.innerHTML = html;
+              topkHint.textContent = isMerged
+                ? `total best from ${nSeeds} seeds — click a thumb to plot spectrum`
+                : 'click a thumb to plot spectrum';
+              ui.selected.step = Number(t.step);
+              ui.selected.idx = 0;
+              ui.selected.seed = null;
+              await loadSpectrum(Number(t.step), 0, null);
+            }
           }
         } catch(e) { /* ignore */ }
 
@@ -1269,7 +1317,7 @@
         drawPurityHeatmap(A);
       }
 
-      async function loadSpectrum(step, idx){
+      async function loadSpectrum(step, idx, seedOverride=null){
         let rgb = null;
         let frgb = null;
         let fdtdStepUsed = null;
@@ -1278,20 +1326,26 @@
         // Track if any data actually loaded (to avoid flickering)
         let dataLoaded = false;
 
-        // Determine which seed to use for spectrum (for merged topk)
+        // Determine which seed to use for spectrum
         let specSeedParam = '';
         let seedLabel = '';
-        const isMerged = ui._lastMergedTopk && ui._lastMergedTopk.merged;
-        if (isMerged && ui._lastMergedTopk.seed_origins && ui._lastMergedTopk.seed_origins[idx] != null) {
-          const seed = ui._lastMergedTopk.seed_origins[idx];
+        if (seedOverride != null && Number.isFinite(Number(seedOverride))) {
+          const seed = Number(seedOverride);
           specSeedParam = `&seed=${seed}`;
           seedLabel = `, seed=${seed}`;
+        } else {
+          const isMerged = ui._lastMergedTopk && ui._lastMergedTopk.merged;
+          if (isMerged && ui._lastMergedTopk.seed_origins && ui._lastMergedTopk.seed_origins[idx] != null) {
+            const seed = ui._lastMergedTopk.seed_origins[idx];
+            specSeedParam = `&seed=${seed}`;
+            seedLabel = `, seed=${seed}`;
+          }
         }
         kpiSpec.textContent = `(step ${step}, k=${idx}${seedLabel})`;
 
         // 1) Try surrogate spectrum (optional)
         try{
-          const specUrl = `/api/topk/${step}/${idx}/spectrum?mode=${encodeURIComponent(ui.topk_mode)}${specSeedParam}`;
+          const specUrl = `/api/topk/${step}/${idx}/spectrum?mode=best${specSeedParam}`;
           console.log('Loading spectrum:', specUrl);
           const s = await fetchJSON(specUrl);
           console.log('Spectrum response:', s);
@@ -1372,15 +1426,18 @@
         if (stepStr == null || idxStr == null) return;
         const step = Number(stepStr);
         const idx = Number(idxStr);
+        const seedStr = el.getAttribute('data-seed');
+        const seed = (seedStr == null || seedStr === '') ? null : Number(seedStr);
         ui.selected.step = step;
         ui.selected.idx = idx;
+        ui.selected.seed = seed;
         Array.from(thumbs.querySelectorAll('.thumb')).forEach(x => x.classList.toggle('sel', x === el));
-        await loadSpectrum(step, idx);
+        await loadSpectrum(step, idx, seed);
       });
 
       initSegmented(document.getElementById('scaleToggle'), 'scale', ['log','linear']);
       initSegmented(document.getElementById('windowToggle'), 'window', ['all','200','50']);
-      initSegmented(document.getElementById('topkModeToggle'), 'topk_mode', ['best','cur']);
+      initSegmented(document.getElementById('topkModeToggle'), 'topk_view', ['total','each']);
       makeLossChart();
       makeSpecChart();
 
@@ -1403,7 +1460,7 @@
           ui.fdtd = fdtdToggle.checked ? 'on' : 'off';
           localStorage.setItem('fdtd_verify', ui.fdtd);
           // refresh spectrum overlay if a thumb is selected
-          if (ui.selected.step != null) loadSpectrum(ui.selected.step, ui.selected.idx);
+          if (ui.selected.step != null) loadSpectrum(ui.selected.step, ui.selected.idx, ui.selected.seed);
         });
       }
 

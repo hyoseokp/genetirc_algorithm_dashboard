@@ -320,6 +320,10 @@ def _save_visualization_plots(best_struct: np.ndarray | None, output_dir: Path, 
                     fdtd_spec = fdtd_spec[0]  # Use first K element: (3, C)
 
                 if fdtd_spec.ndim == 2 and fdtd_spec.shape[0] == 3:  # (3, C)
+                    # Ensure FDTD is positive (take absolute value)
+                    fdtd_spec = np.abs(fdtd_spec)
+                    print(f"[DEBUG] FDTD spectrum range: min={fdtd_spec.min():.6f}, max={fdtd_spec.max():.6f}", file=sys.stderr)
+
                     C = fdtd_spec.shape[1]
                     wavelengths = np.linspace(400, 700, C)
 
@@ -333,6 +337,8 @@ def _save_visualization_plots(best_struct: np.ndarray | None, output_dir: Path, 
                         try:
                             surrogate_spec = np.load(surrogate_file)  # (3, C_surr)
                             print(f"[DEBUG] Loaded surrogate spectrum shape: {surrogate_spec.shape}", file=sys.stderr)
+                            print(f"[DEBUG] Surrogate spectrum range before processing: min={surrogate_spec.min():.6f}, max={surrogate_spec.max():.6f}", file=sys.stderr)
+
                             # Interpolate surrogate to match FDTD channel count
                             if surrogate_spec.ndim == 2 and surrogate_spec.shape[0] == 3:
                                 C_surr = surrogate_spec.shape[1]
@@ -348,6 +354,12 @@ def _save_visualization_plots(best_struct: np.ndarray | None, output_dir: Path, 
                                         surrogate_interp[j] = f(x_fdtd)
                                     surrogate_spec = surrogate_interp
                                     print(f"[DEBUG] Surrogate interpolation complete: {surrogate_spec.shape}", file=sys.stderr)
+                                else:
+                                    print(f"[DEBUG] Surrogate channels match FDTD ({C}), no interpolation needed", file=sys.stderr)
+
+                                # Ensure surrogate is positive (take absolute value)
+                                surrogate_spec = np.abs(surrogate_spec)
+                                print(f"[DEBUG] Surrogate spectrum range after processing: min={surrogate_spec.min():.6f}, max={surrogate_spec.max():.6f}", file=sys.stderr)
                             else:
                                 print(f"[DEBUG] Surrogate shape unexpected: {surrogate_spec.shape}", file=sys.stderr)
                                 surrogate_spec = None
@@ -359,9 +371,11 @@ def _save_visualization_plots(best_struct: np.ndarray | None, output_dir: Path, 
 
                     # Plot FDTD (and surrogate if available)
                     for i, (color, label) in enumerate(zip(colors, labels)):
-                        if surrogate_spec is not None and surrogate_spec.shape[0] >= 3:
+                        if surrogate_spec is not None:
+                            print(f"[DEBUG] Plotting surrogate {label}: shape={surrogate_spec[i].shape}, has data={np.any(np.isfinite(surrogate_spec[i]))}", file=sys.stderr)
                             ax.plot(wavelengths, surrogate_spec[i], color=color, linestyle='--',
                                    linewidth=2, alpha=0.7, label=f"Surrogate {label}")
+                        print(f"[DEBUG] Plotting FDTD {label}: shape={fdtd_spec[i].shape}, has data={np.any(np.isfinite(fdtd_spec[i]))}", file=sys.stderr)
                         ax.plot(wavelengths, fdtd_spec[i], color=color, linestyle='-',
                                linewidth=2.5, alpha=0.9, label=f"FDTD {label}")
 

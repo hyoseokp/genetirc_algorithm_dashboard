@@ -153,10 +153,58 @@ def _collect_and_save_results(seed: int | None, active_seeds: list[int], progres
         if not seeds_to_process:
             seeds_to_process = [0]
 
-        # Load metadata to get optimizer and generator info
-        meta = _read_meta(progress_dir)
-        optimizer = meta.get("engine", "unknown")
-        gen_backend = meta.get("generator", {}).get("backend", "unknown") if isinstance(meta.get("generator"), dict) else "unknown"
+        # Resolve metadata (multi-seed safe): prefer best seed dir meta, then any seed dir, then base dir.
+        seed_dirs = [progress_dir / f"seed_{int(s)}" if int(s) != 0 else progress_dir for s in seeds_to_process]
+        meta_candidates: list[Path] = []
+        meta_candidates.extend(seed_dirs)
+        if progress_dir not in meta_candidates:
+            meta_candidates.append(progress_dir)
+
+        meta: dict[str, Any] = {}
+        for p in meta_candidates:
+            m = _read_meta(p)
+            if isinstance(m, dict) and m:
+                meta = m
+                break
+
+        optimizer = str(meta.get("engine", "") or "").strip().lower()
+        if not optimizer:
+            ga_cfg = meta.get("ga", {})
+            if isinstance(ga_cfg, dict):
+                optimizer = str(ga_cfg.get("optimizer_type", "") or "").strip().lower()
+
+        gen_backend = ""
+        gen_meta = meta.get("generator", {})
+        if isinstance(gen_meta, dict):
+            gen_backend = str(gen_meta.get("backend", "") or "").strip()
+
+        # Fallback to run_config.yaml if run_meta is missing or incomplete.
+        if not optimizer or not gen_backend:
+            for p in meta_candidates:
+                cfg_path = p / "run_config.yaml"
+                if not cfg_path.exists():
+                    continue
+                try:
+                    cfg_obj = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+                except Exception:
+                    cfg_obj = {}
+                if not isinstance(cfg_obj, dict):
+                    continue
+                if not optimizer:
+                    ga_obj = cfg_obj.get("ga", {})
+                    if isinstance(ga_obj, dict):
+                        optimizer = str(ga_obj.get("optimizer_type", "") or "").strip().lower()
+                if not gen_backend:
+                    gen_obj = cfg_obj.get("generator", {})
+                    if isinstance(gen_obj, dict):
+                        gen_backend = str(gen_obj.get("backend", "") or "").strip()
+                if optimizer and gen_backend:
+                    break
+
+        if not optimizer:
+            optimizer = "unknown"
+        if not gen_backend:
+            gen_backend = "unknown"
 
         # Create folder name
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

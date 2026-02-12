@@ -373,7 +373,6 @@
             <select id="inOptimizer">
               <option value="ga" selected>GA</option>
               <option value="cmaes">CMA-ES</option>
-              <option value="cmaes-multi">CMA-ES (Multi-Start)</option>
             </select>
           </div>
           <div class="field">
@@ -1431,10 +1430,10 @@
 
         // Show/hide parameter sections based on optimizer
         if (gaParamsSection) {
-          gaParamsSection.style.display = (optValue === 'ga' || optValue === 'cmaes-multi') ? 'block' : 'none';
+          gaParamsSection.style.display = (optValue === 'ga') ? 'block' : 'none';
         }
         if (cmaesParamsSection) {
-          cmaesParamsSection.style.display = (optValue === 'cmaes' || optValue === 'cmaes-multi') ? 'block' : 'none';
+          cmaesParamsSection.style.display = (optValue === 'cmaes') ? 'block' : 'none';
         }
       }
 
@@ -1459,11 +1458,9 @@
           const nSteps = Number(document.getElementById('inNSteps')?.value || 2000);
           const topk = Number(document.getElementById('inTopk')?.value || 50);
           const dev = String(document.getElementById('inDevice')?.value || 'cpu');
-          const optType_raw = String(document.getElementById('inOptimizer')?.value || 'ga');
-          // Support both explicit 'cmaes-multi' and general multi-start for any optimizer
-          const optType = (optType_raw === 'cmaes-multi') ? 'cmaes' : optType_raw;
+          const optType = String(document.getElementById('inOptimizer')?.value || 'ga');
           const numRuns = Number(document.getElementById('inNumRuns')?.value || 1);
-          const isMultiStart = numRuns > 1 || optType_raw === 'cmaes-multi';
+          const isMultiStart = numRuns > 1;
           const genBackend = String(document.getElementById('inGenBackend')?.value || 'rule_mfs');
           const chunk = Number(document.getElementById('inChunk')?.value || 32);
           const fdtdEvery = Number(document.getElementById('inFdtdEvery')?.value || 10);
@@ -1655,7 +1652,7 @@
         const ot = localStorage.getItem('optimizer_type');
         const otEl = document.getElementById('inOptimizer');
         if (otEl) {
-          otEl.value = (ot === 'cmaes' || ot === 'cmaes-multi') ? ot : 'ga';
+          otEl.value = (ot === 'cmaes' || ot === 'cmaes-multi') ? 'cmaes' : 'ga';
           otEl.addEventListener('change', () => localStorage.setItem('optimizer_type', otEl.value));
         }
         // generator backend

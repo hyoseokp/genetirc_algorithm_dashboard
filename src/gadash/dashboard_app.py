@@ -1425,6 +1425,44 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
             rs.artifacts_info = info
             return info
 
+    def _recoverable_cached_seeds() -> list[int]:
+        """Find seeds that currently have recoverable topk snapshots on disk."""
+        seed_candidates: list[tuple[int, Path]] = []
+
+        # Prefer explicit seed_* directories in multi-run scenarios.
+        if progress_dir.exists():
+            for d in sorted(progress_dir.iterdir()):
+                if not d.is_dir():
+                    continue
+                m = re.match(r"^seed_(\d+)$", d.name)
+                if m is None:
+                    continue
+                try:
+                    s = int(m.group(1))
+                except Exception:
+                    continue
+                if any(d.glob("topk_step-*.npz")):
+                    seed_candidates.append((s, d))
+
+        if seed_candidates:
+            return [s for s, _ in seed_candidates]
+
+        # Single-seed fallback: base progress dir.
+        if progress_dir.exists() and any(progress_dir.glob("topk_step-*.npz")):
+            return [0]
+        return []
+
+    def _recover_cached_results(reason: str) -> dict[str, Any]:
+        """Best-effort recovery save from cached progress files."""
+        seeds = _recoverable_cached_seeds()
+        if not seeds:
+            return {"ok": False, "recovered": False, "error": "no recoverable cached topk files"}
+        info = dict(_collect_and_save_results(None, seeds, progress_dir, surrogate))
+        info["recovered"] = bool(info.get("ok"))
+        info["recovered_seeds"] = sorted(seeds)
+        info["persist_reason"] = reason
+        return info
+
     def _reader_thread(p: subprocess.Popen, seed: int) -> None:
         try:
             assert p.stdout is not None
@@ -1735,6 +1773,10 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         if seed is not None:
             rs = rstate_dict.get(seed)
             if rs is None or rs.proc is None or rs.proc.poll() is not None:
+                # Process may have already finished; try saving from cached files.
+                recovered = _recover_cached_results(reason=f"api_stop_seed_{seed}_cached_recovery")
+                if recovered.get("ok"):
+                    return JSONResponse({"ok": True, "stopped": False, "seed": seed, **recovered})
                 return JSONResponse({"ok": True, "stopped": False, "error": f"seed {seed}: no running process"})
             try:
                 rs.lines.append(f"[dashboard] stopping seed {seed}...")
@@ -1784,6 +1826,10 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
                 pass
 
         if not stopped_seeds:
+            # All processes may have already exited naturally; recover from cache if possible.
+            recovered = _recover_cached_results(reason="api_stop_cached_recovery")
+            if recovered.get("ok"):
+                return JSONResponse({"ok": True, "stopped": False, **recovered})
             return JSONResponse({"ok": True, "stopped": False, "error": "no running processes"})
 
         # Collect and save optimization results for all stopped seeds

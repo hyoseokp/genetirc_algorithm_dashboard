@@ -698,6 +698,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
     progress_dir = Path(progress_dir).resolve()  # Convert to absolute path
     cache = TopKCache()
     scache = SpectrumCache()
+    surrogate_for_save = surrogate
 
     # Multi-seed state tracking
     rstate_dict: dict[int, RunProcState] = {}
@@ -706,6 +707,33 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
 
     # Dashboard-level FDTD scheduler for multi-seed
     dash_fdtd = DashboardFDTDScheduler(progress_dir)
+
+    def _get_surrogate_for_save():
+        """Return surrogate for persistence, loading lazily if app started without one."""
+        nonlocal surrogate_for_save
+        if surrogate_for_save is not None:
+            return surrogate_for_save
+        try:
+            from gadash.config import load_config
+            from gadash.surrogate_interface import CRReconSurrogate
+
+            cfg = load_config("configs/ga.yaml", "configs/paths.yaml")
+            root = str(cfg.paths.forward_model_root or "")
+            ckpt = str(cfg.paths.forward_checkpoint or "")
+            cfg_yaml = str(cfg.paths.forward_config_yaml or "")
+            if not root or not ckpt or not cfg_yaml:
+                return None
+            surrogate_for_save = CRReconSurrogate(
+                forward_model_root=Path(root),
+                checkpoint_path=Path(ckpt),
+                config_yaml=Path(cfg_yaml),
+                device=torch.device("cpu"),
+            )
+            print("[DASHBOARD] Lazy surrogate load for save: OK", flush=True)
+            return surrogate_for_save
+        except Exception as e:
+            print(f"[DASHBOARD] Lazy surrogate load for save failed: {e}", file=sys.stderr, flush=True)
+            return None
 
     app = FastAPI(title="GA Dashboard")
 
@@ -1419,7 +1447,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
                 return rs.artifacts_info or {"ok": True, "already_saved": True}
 
             _save_log_for_seed(seed, rs)
-            info = dict(_collect_and_save_results(seed, active_seeds, progress_dir, surrogate))
+            info = dict(_collect_and_save_results(seed, active_seeds, progress_dir, _get_surrogate_for_save()))
             info["persist_reason"] = reason
             rs.artifacts_saved = True
             rs.artifacts_info = info
@@ -1457,7 +1485,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         seeds = _recoverable_cached_seeds()
         if not seeds:
             return {"ok": False, "recovered": False, "error": "no recoverable cached topk files"}
-        info = dict(_collect_and_save_results(None, seeds, progress_dir, surrogate))
+        info = dict(_collect_and_save_results(None, seeds, progress_dir, _get_surrogate_for_save()))
         info["recovered"] = bool(info.get("ok"))
         info["recovered_seeds"] = sorted(seeds)
         info["persist_reason"] = reason
@@ -1833,7 +1861,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
             return JSONResponse({"ok": True, "stopped": False, "error": "no running processes"})
 
         # Collect and save optimization results for all stopped seeds
-        result_info = _collect_and_save_results(None, stopped_seeds, progress_dir, surrogate)
+        result_info = _collect_and_save_results(None, stopped_seeds, progress_dir, _get_surrogate_for_save())
         for s in stopped_seeds:
             rs = rstate_dict.get(s)
             if rs is not None:

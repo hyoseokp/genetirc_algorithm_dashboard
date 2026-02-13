@@ -140,6 +140,8 @@ class RunProcState:
     lines: deque[str] = field(default_factory=lambda: deque(maxlen=400))
     started_ts: str | None = None
     last_exit_code: int | None = None
+    artifacts_saved: bool = False
+    artifacts_info: dict[str, Any] | None = None
 
 
 def _collect_and_save_results(seed: int | None, active_seeds: list[int], progress_dir: Path, surrogate=None) -> dict[str, Any]:
@@ -696,6 +698,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
     # Multi-seed state tracking
     rstate_dict: dict[int, RunProcState] = {}
     active_seeds: list[int] = []
+    persist_lock = threading.Lock()
 
     # Dashboard-level FDTD scheduler for multi-seed
     dash_fdtd = DashboardFDTDScheduler(progress_dir)
@@ -1383,6 +1386,41 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
             headers={"Cache-Control": "no-store, max-age=0, must-revalidate"},
         )
 
+    def _save_log_for_seed(s: int, rs: RunProcState) -> None:
+        """Save log for a single seed to D:\\optimization_log."""
+        try:
+            log_dir = Path("D:\\optimization_log")
+            log_dir.mkdir(parents=True, exist_ok=True)
+
+            # Create timestamp for unique log file
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_file = log_dir / f"seed_{s}_{timestamp}.log"
+
+            # Write log content
+            with log_file.open("w", encoding="utf-8") as f:
+                f.write(f"=== Log for seed {s} ===\n")
+                f.write(f"Started: {rs.started_ts}\n")
+                f.write(f"Exit code: {rs.last_exit_code}\n")
+                f.write(f"Stopped at: {datetime.now().isoformat()}\n")
+                f.write("\n--- Process output ---\n")
+                for line in rs.lines:
+                    f.write(line + "\n")
+        except Exception as e:
+            print(f"Failed to save log for seed {s}: {e}", file=sys.stderr)
+
+    def _persist_seed_artifacts(seed: int, rs: RunProcState, reason: str) -> dict[str, Any]:
+        """Persist log/results once per seed, regardless of stop or natural exit."""
+        with persist_lock:
+            if rs.artifacts_saved:
+                return rs.artifacts_info or {"ok": True, "already_saved": True}
+
+            _save_log_for_seed(seed, rs)
+            info = dict(_collect_and_save_results(seed, active_seeds, progress_dir, surrogate))
+            info["persist_reason"] = reason
+            rs.artifacts_saved = True
+            rs.artifacts_info = info
+            return info
+
     def _reader_thread(p: subprocess.Popen, seed: int) -> None:
         try:
             assert p.stdout is not None
@@ -1397,6 +1435,16 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
                     if "message = re.sub('^(Error:)\\s(prompt line)\\s[0-9]+:'" in s:
                         continue
                     rs.lines.append(s)
+            # Process finished naturally (or externally); persist automatically.
+            code = p.poll()
+            if code is None:
+                try:
+                    code = p.wait(timeout=0.1)
+                except Exception:
+                    code = p.poll()
+            rs.last_exit_code = code
+            rs.lines.append(f"[dashboard] process exited (seed={seed}, exit={code})")
+            _persist_seed_artifacts(seed, rs, reason="process_exit")
         except Exception:
             pass
 
@@ -1680,28 +1728,6 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         seed=None → stop ALL running seeds.
         seed=N → stop only seed N.
         """
-        def _save_log(s: int, rs: RunProcState) -> None:
-            """Save log for a single seed to D:\\optimization_log."""
-            try:
-                log_dir = Path("D:\\optimization_log")
-                log_dir.mkdir(parents=True, exist_ok=True)
-
-                # Create timestamp for unique log file
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                log_file = log_dir / f"seed_{s}_{timestamp}.log"
-
-                # Write log content
-                with log_file.open("w", encoding="utf-8") as f:
-                    f.write(f"=== Log for seed {s} ===\n")
-                    f.write(f"Started: {rs.started_ts}\n")
-                    f.write(f"Exit code: {rs.last_exit_code}\n")
-                    f.write(f"Stopped at: {datetime.now().isoformat()}\n")
-                    f.write("\n--- Process output ---\n")
-                    for line in rs.lines:
-                        f.write(line + "\n")
-            except Exception as e:
-                print(f"Failed to save log for seed {s}: {e}", file=sys.stderr)
-
         if seed is not None:
             rs = rstate_dict.get(seed)
             if rs is None or rs.proc is None or rs.proc.poll() is not None:
@@ -1720,11 +1746,8 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
                 rs.last_exit_code = code
                 rs.lines.append(f"[dashboard] stopped (exit={code})")
 
-                # Save log to file
-                _save_log(seed, rs)
-
-                # Collect and save optimization results
-                result_info = _collect_and_save_results(seed, active_seeds, progress_dir, surrogate)
+                # Persist exactly once for this seed.
+                result_info = _persist_seed_artifacts(seed, rs, reason="api_stop")
 
                 return JSONResponse({"ok": True, "stopped": True, "seed": seed, "exit_code": code, **result_info})
             except Exception as e:
@@ -1752,7 +1775,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
                 stopped_seeds.append(s)
 
                 # Save log to file
-                _save_log(s, rs)
+                _save_log_for_seed(s, rs)
             except Exception:
                 pass
 
@@ -1761,6 +1784,11 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
 
         # Collect and save optimization results for all stopped seeds
         result_info = _collect_and_save_results(None, stopped_seeds, progress_dir, surrogate)
+        for s in stopped_seeds:
+            rs = rstate_dict.get(s)
+            if rs is not None:
+                rs.artifacts_saved = True
+                rs.artifacts_info = {**result_info, "persist_reason": "api_stop_all"}
 
         return JSONResponse({"ok": True, "stopped": True, "stopped_seeds": stopped_seeds, **result_info})
 

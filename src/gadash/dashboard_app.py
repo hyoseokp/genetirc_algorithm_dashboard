@@ -322,7 +322,8 @@ def _collect_and_save_results(seed: int | None, active_seeds: list[int], progres
                     r = fdtd_rggb[:, 0, 0, :]
                     g = 0.5 * (fdtd_rggb[:, 0, 1, :] + fdtd_rggb[:, 1, 0, :])
                     b = fdtd_rggb[:, 1, 1, :]
-                    fdtd_rgb = np.stack([r, g, b], axis=1)
+                    # Monitor orientation can flip sign; persist magnitude for visualization consistency.
+                    fdtd_rgb = np.abs(np.stack([r, g, b], axis=1))
                     fdtd_spectrum_file = output_dir / "fdtd_spectrum.npy"
                     np.save(fdtd_spectrum_file, fdtd_rgb)
         except Exception as e:
@@ -397,6 +398,9 @@ def _save_visualization_plots(best_struct: np.ndarray | None, output_dir: Path) 
                 # Handle both (K, 3, C) and (3, C) shapes
                 if fdtd_spec.ndim == 3 and fdtd_spec.shape[0] > 0:
                     fdtd_spec = fdtd_spec[0]  # Take first if (K, 3, C)
+
+                # Keep FDTD visualization in positive magnitude domain.
+                fdtd_spec = np.abs(fdtd_spec)
 
                 print(f"[DEBUG] FDTD spectrum after extraction: shape={fdtd_spec.shape}", flush=True)
 

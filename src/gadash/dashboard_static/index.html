@@ -4,6 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>CR Inverse Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js" onerror="window.chartJsLoadFailed=true;"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.0/dist/katex.min.css" onerror="window.katexLoadFailed=true;">
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.0/dist/katex.min.js" onerror="window.katexLoadFailed=true;"></script>
@@ -11,166 +14,306 @@
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       :root {
-        --bg: #f1f5f9;
+        --bg: #fafafa;
         --card: #ffffff;
-        --header-bg: #0f172a;
-        --text: #1e293b;
-        --muted: #94a3b8;
-        --border: #e2e8f0;
+        --header-bg: #09090b;
+        --text: #18181b;
+        --muted: #71717a;
+        --border: #e4e4e7;
         --accent: #6366f1;
+        --accent-hover: #4f46e5;
+        --accent-light: rgba(99,102,241,0.08);
         --good: #22c55e;
-        --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
-        --shadow-md: 0 4px 6px rgba(0,0,0,0.07), 0 2px 4px rgba(0,0,0,0.06);
-        --radius: 10px;
+        --danger: #ef4444;
+        --surface: #f4f4f5;
+        --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.06);
+        --shadow-md: 0 2px 4px rgba(0,0,0,0.03), 0 4px 12px rgba(0,0,0,0.06);
+        --shadow-lg: 0 4px 6px rgba(0,0,0,0.02), 0 10px 24px rgba(0,0,0,0.08);
+        --radius: 12px;
+        --radius-sm: 8px;
         --panel-aspect: 2 / 1;
+        --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
       }
+      html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
       body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         background: var(--bg);
         color: var(--text);
-        padding: 16px;
+        padding: 20px;
         min-height: 100vh;
+        line-height: 1.5;
       }
+
+      /* === Scrollbar === */
+      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 999px; }
+      ::-webkit-scrollbar-thumb:hover { background: #a1a1aa; }
+
+      /* === Header === */
       .header {
         background: var(--header-bg);
         color: white;
-        padding: 14px 20px;
+        padding: 16px 24px;
         border-radius: var(--radius);
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 12px;
+        margin-bottom: 16px;
+        position: relative;
+        overflow: hidden;
       }
-      .header-title { font-size: 18px; font-weight: 800; letter-spacing: -0.3px; }
-      .header-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+      .header::after {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: linear-gradient(90deg, var(--accent), #a78bfa, #ec4899, var(--accent));
+        opacity: 0.7;
+      }
+      .header-title { font-size: 17px; font-weight: 700; letter-spacing: -0.4px; }
+      .header-sub { font-size: 12px; color: #a1a1aa; margin-top: 3px; font-weight: 400; }
       .status {
         display: inline-flex;
         align-items: center;
         gap: 8px;
-        font-size: 12px;
-        color: var(--muted);
-        background: #1e293b;
-        padding: 6px 10px;
+        font-size: 11px;
+        font-weight: 500;
+        color: #a1a1aa;
+        background: rgba(255,255,255,0.06);
+        padding: 6px 12px;
         border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.08);
+        backdrop-filter: blur(8px);
       }
-      .dot { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; }
-      .dot.on { background: var(--good); box-shadow: 0 0 6px var(--good); }
+      .dot {
+        width: 7px; height: 7px; border-radius: 50%; background: var(--danger);
+        transition: all 0.3s ease;
+      }
+      .dot.on {
+        background: var(--good);
+        box-shadow: 0 0 8px rgba(34,197,94,0.6);
+      }
 
+      /* === Layout === */
       .grid {
         display: grid;
         grid-template-columns: 1fr;
-        gap: 12px;
+        gap: 14px;
         align-items: start;
       }
       .row2 {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 12px;
+        gap: 14px;
         align-items: start;
       }
       @media (max-width: 960px) {
         .row2 { grid-template-columns: 1fr; }
       }
+
+      /* === Cards === */
       .card {
         background: var(--card);
         border-radius: var(--radius);
         box-shadow: var(--shadow-md);
         border: 1px solid var(--border);
-        padding: 14px 16px;
+        padding: 18px 20px;
+        transition: box-shadow 0.2s ease;
       }
+
+      /* === Controls Grid === */
       .controls {
         display: grid;
-        grid-template-columns: 1fr 1.2fr 1fr 1fr 1fr 1fr 1fr 1fr auto;
+        grid-template-columns: 1fr 1fr 1.2fr 1fr 1fr 1fr 1fr 1fr 1fr;
         gap: 10px;
         align-items: end;
-        margin-top: 10px;
+        margin-top: 12px;
       }
       @media (max-width: 1100px) {
         .controls { grid-template-columns: 1fr 1fr 1fr; }
       }
+
+      /* === Field Labels & Inputs === */
       .field label {
         display: block;
         font-size: 11px;
-        color: #64748b;
-        font-weight: 700;
-        margin-bottom: 4px;
+        color: var(--muted);
+        font-weight: 600;
+        margin-bottom: 5px;
+        letter-spacing: 0.01em;
+        text-transform: uppercase;
       }
       .field input, .field select {
         width: 100%;
         border: 1px solid var(--border);
-        border-radius: 10px;
+        border-radius: var(--radius-sm);
         padding: 8px 10px;
-        background: #f8fafc;
-        color: #0f172a;
-        font-size: 12px;
+        background: var(--surface);
+        color: var(--text);
+        font-size: 13px;
+        font-family: inherit;
         outline: none;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+      }
+      .field input:hover, .field select:hover {
+        border-color: #d4d4d8;
       }
       .field input:focus, .field select:focus {
-        border-color: rgba(99,102,241,0.55);
-        box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-light);
+        background: #fff;
       }
+
+      /* === Toggle Row === */
       .toggleRow {
         display: inline-flex;
         align-items: center;
-        gap: 10px;
-        padding: 8px 10px;
+        gap: 8px;
+        padding: 6px 12px;
         border: 1px solid var(--border);
-        border-radius: 12px;
-        background: #f8fafc;
-        height: 38px;
+        border-radius: var(--radius);
+        background: var(--surface);
+        height: 36px;
       }
       .toggleRow .kpi { margin: 0; }
+
+      /* === Custom Toggle Switch === */
+      input[type="checkbox"] {
+        appearance: none;
+        -webkit-appearance: none;
+        width: 36px;
+        height: 20px;
+        background: #d4d4d8;
+        border-radius: 999px;
+        position: relative;
+        cursor: pointer;
+        transition: background 0.2s ease;
+        flex-shrink: 0;
+      }
+      input[type="checkbox"]::after {
+        content: '';
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 16px;
+        height: 16px;
+        background: #fff;
+        border-radius: 50%;
+        transition: transform 0.2s ease;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+      }
+      input[type="checkbox"]:checked {
+        background: var(--accent);
+      }
+      input[type="checkbox"]:checked::after {
+        transform: translateX(16px);
+      }
+      input[type="checkbox"]:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      /* === Buttons === */
       .btn {
         appearance: none;
         border: 0;
-        border-radius: 12px;
-        padding: 10px 14px;
-        background: linear-gradient(180deg, #111827, #0b1220);
+        border-radius: var(--radius-sm);
+        padding: 0 16px;
+        background: var(--accent);
         color: #fff;
-        font-weight: 800;
-        font-size: 12px;
+        font-weight: 600;
+        font-size: 13px;
+        font-family: inherit;
         cursor: pointer;
-        height: 38px;
-        box-shadow: var(--shadow);
+        height: 36px;
+        box-shadow: 0 1px 2px rgba(99,102,241,0.3);
+        transition: all 0.15s ease;
+        white-space: nowrap;
       }
-      .btn:active { transform: translateY(1px); }
+      .btn:hover {
+        background: var(--accent-hover);
+        box-shadow: 0 2px 8px rgba(99,102,241,0.35);
+        transform: translateY(-1px);
+      }
+      .btn:active { transform: translateY(0); box-shadow: var(--shadow); }
+      .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       .btn.secondary {
-        background: #f8fafc;
-        color: #0f172a;
+        background: var(--surface);
+        color: var(--text);
         border: 1px solid var(--border);
         box-shadow: none;
       }
-      .btn.danger {
-        background: linear-gradient(180deg, #ef4444, #b91c1c);
+      .btn.secondary:hover {
+        background: #e4e4e7;
+        border-color: #d4d4d8;
+        box-shadow: none;
+        transform: translateY(-1px);
       }
+      .btn.danger {
+        background: var(--danger);
+        box-shadow: 0 1px 2px rgba(239,68,68,0.3);
+      }
+      .btn.danger:hover {
+        background: #dc2626;
+        box-shadow: 0 2px 8px rgba(239,68,68,0.35);
+      }
+
+      /* === Run Status === */
       .runStatus {
         margin-top: 10px;
         font-size: 12px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-        color: #0f172a;
-        background: #f8fafc;
+        font-family: var(--mono);
+        color: var(--text);
+        background: var(--surface);
         border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 10px 12px;
+        border-left: 3px solid var(--accent);
+        border-radius: var(--radius-sm);
+        padding: 10px 14px;
         min-height: 44px;
         white-space: pre-wrap;
         word-break: break-word;
-        line-height: 1.45;
+        line-height: 1.5;
       }
       .runStatusLabel {
         font-size: 11px;
-        color: #64748b;
-        font-weight: 700;
-        margin-top: 10px;
+        color: var(--muted);
+        font-weight: 600;
+        margin-top: 12px;
         margin-bottom: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
       }
-      details.adv { margin-top: 10px; }
+
+      /* === Details / Accordion === */
+      details.adv { margin-top: 12px; }
       details.adv summary {
         cursor: pointer;
-        font-size: 12px;
-        font-weight: 800;
-        color: #0f172a;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text);
         user-select: none;
+        padding: 8px 0;
+        border-top: 1px solid var(--border);
+        list-style: none;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      details.adv summary::-webkit-details-marker { display: none; }
+      details.adv summary::before {
+        content: '\203A';
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--muted);
+        transition: transform 0.2s ease;
+        display: inline-block;
+        width: 12px;
+      }
+      details.adv[open] summary::before {
+        transform: rotate(90deg);
       }
       .controls.loss {
         grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr 1fr;
@@ -179,108 +322,162 @@
       @media (max-width: 1100px) {
         .controls.loss { grid-template-columns: 1fr 1fr 1fr; }
       }
+
+      /* === Panel === */
       .panel {
         display: flex;
         flex-direction: column;
         min-width: 0;
       }
       .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
-      .kpi { font-size: 12px; color: #64748b; }
-      .kpi b { color: var(--text); }
+
+      /* === KPI === */
+      .kpi { font-size: 12px; color: var(--muted); font-weight: 500; }
+      .kpi b { color: var(--text); font-weight: 700; }
+
+      /* === Progress Bar === */
       .bar {
         width: 100%; height: 6px; border-radius: 999px;
-        background: #e5e7eb; overflow: hidden; margin-top: 8px;
+        background: var(--border); overflow: hidden; margin-top: 10px;
       }
       .bar > div {
         height: 100%; width: 0%;
-        background: linear-gradient(90deg, #60a5fa, #34d399);
-        transition: width 0.2s ease;
+        background: linear-gradient(90deg, var(--accent), #818cf8);
+        transition: width 0.3s ease;
+        border-radius: 999px;
       }
+
+      /* === Segmented Control === */
       .segmented {
         display: inline-flex;
         border: 1px solid var(--border);
-        border-radius: 10px;
+        border-radius: var(--radius-sm);
         overflow: hidden;
-        background: #f8fafc;
+        background: var(--surface);
+        padding: 2px;
+        gap: 2px;
       }
       .seg-btn {
         appearance: none;
         border: 0;
         background: transparent;
-        color: #475569;
-        padding: 6px 10px;
+        color: var(--muted);
+        padding: 5px 10px;
         font-size: 11px;
-        font-weight: 700;
+        font-weight: 600;
+        font-family: inherit;
         cursor: pointer;
-        border-right: 1px solid var(--border);
+        border-radius: 6px;
+        transition: all 0.15s ease;
+        border-right: none;
       }
       .seg-btn:last-child { border-right: 0; }
-      .seg-btn.active { background: #0f172a; color: white; }
-      /* Keep optima + spectrum chart areas the same height. */
+      .seg-btn:hover { color: var(--text); background: rgba(0,0,0,0.04); }
+      .seg-btn.active {
+        background: var(--accent);
+        color: white;
+        box-shadow: 0 1px 3px rgba(99,102,241,0.25);
+      }
+
+      /* === Charts === */
       .chartBox {
         position: relative;
         width: 100%;
         height: 360px;
-        margin-top: 10px;
+        margin-top: 12px;
       }
       .chartBox canvas { width: 100% !important; height: 100% !important; }
 
-      .thumbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
+      /* === Thumbnails === */
+      .thumbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 12px; }
       @media (max-width: 960px) { .thumbs { grid-template-columns: repeat(3, 1fr); } }
       @media (max-width: 600px) { .thumbs { grid-template-columns: repeat(2, 1fr); } }
       .thumb {
-        border: 1px solid var(--border);
-        border-radius: 10px;
+        border: 2px solid transparent;
+        border-radius: var(--radius);
         padding: 8px;
-        background: #f8fafc;
+        background: var(--surface);
         cursor: pointer;
+        transition: all 0.2s ease;
       }
-      .thumb.sel { outline: 2px solid var(--accent); }
-      .thumb img { width: 100%; border-radius: 8px; image-rendering: pixelated; display: block; }
-      .cap { font-size: 11px; color: #64748b; margin-top: 6px; }
-      .seedGroup { margin-top: 12px; }
-      .seedGroupTitle { font-size: 12px; color: #475569; font-weight: 700; margin: 2px 0 6px 2px; }
-      .hint { font-size: 11px; color: #64748b; margin-top: 6px; }
+      .thumb:hover {
+        border-color: #d4d4d8;
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-md);
+      }
+      .thumb.sel {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-light), var(--shadow-md);
+      }
+      .thumb img { width: 100%; border-radius: var(--radius-sm); image-rendering: pixelated; display: block; }
+      .cap { font-size: 11px; color: var(--muted); margin-top: 6px; font-weight: 500; }
+      .seedGroup { margin-top: 0; min-width: 0; }
+      .seedGroup .thumbs {
+        grid-template-columns: repeat(3, 1fr);
+        margin-top: 8px;
+      }
+      /* When #thumbs contains seedGroups (each-best mode), use 2-col grid */
+      #thumbs:has(.seedGroup) {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        margin-top: 12px;
+      }
+      @media (max-width: 960px) {
+        #thumbs:has(.seedGroup) { grid-template-columns: 1fr; }
+      }
+      .seedGroupTitle {
+        font-size: 12px;
+        color: var(--text);
+        font-weight: 600;
+        margin: 2px 0 4px 2px;
+        padding-bottom: 4px;
+        border-bottom: 1px solid var(--border);
+        display: inline-block;
+      }
+      .hint { font-size: 11px; color: var(--muted); margin-top: 8px; font-style: italic; }
+
+      /* === Purity === */
       .purityBox {
         margin-top: 10px;
-        background: #f8fafc;
+        background: var(--surface);
         border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 10px 12px;
-        color: #0f172a;
+        border-radius: var(--radius-sm);
+        padding: 12px 14px;
+        color: var(--text);
         font-size: 12px;
         line-height: 1.6;
       }
-      .purityMono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace; font-size: 11px; color: #334155; }
+      .purityMono { font-family: var(--mono); font-size: 11px; color: #3f3f46; }
       .purityPanel {
-        margin-top: 10px;
+        margin-top: 12px;
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 12px;
+        gap: 14px;
         align-items: start;
       }
       @media (max-width: 960px) {
         .purityPanel { grid-template-columns: 1fr; }
       }
       .purityTable {
-        background: #f8fafc;
+        background: var(--surface);
         border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 10px 12px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace;
+        border-radius: var(--radius-sm);
+        padding: 12px 14px;
+        font-family: var(--mono);
         font-size: 12px;
-        line-height: 1.65;
-        color: #0f172a;
+        line-height: 1.7;
+        color: var(--text);
         white-space: pre;
         font-variant-numeric: tabular-nums;
         overflow: auto;
         min-height: 240px;
       }
       .purityViz {
-        background: #f8fafc;
+        background: var(--surface);
         border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 10px 12px;
+        border-radius: var(--radius-sm);
+        padding: 12px 14px;
       }
       .purityVizRow {
         display: grid;
@@ -298,19 +495,19 @@
         width: 100% !important;
         height: 100% !important;
         display: block;
-        border-radius: 8px;
+        border-radius: var(--radius-sm);
         background: white;
       }
       .cbar {
         width: 22px;
         height: 100%;
-        border-radius: 8px;
+        border-radius: var(--radius-sm);
         border: 1px solid var(--border);
         background: linear-gradient(180deg, #ffffff, #000000);
       }
       .cbarLabel {
         font-size: 10px;
-        color: #64748b;
+        color: var(--muted);
         text-align: center;
         margin-top: 6px;
       }
@@ -318,16 +515,18 @@
         display: flex;
         justify-content: space-between;
         font-size: 10px;
-        color: #64748b;
+        color: var(--muted);
         margin-top: 6px;
       }
+
+      /* === Formula === */
       .formulaBox {
-        margin-top: 10px;
-        background: #f8fafc;
+        margin-top: 12px;
+        background: var(--surface);
         border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 12px;
-        color: #0f172a;
+        border-radius: var(--radius-sm);
+        padding: 14px;
+        color: var(--text);
         overflow: auto;
         max-height: 420px;
       }
@@ -337,6 +536,11 @@
         white-space: pre-wrap;
       }
       .katex { font-size: 1.0em; }
+
+      /* === Selection highlight === */
+      ::selection {
+        background: rgba(99,102,241,0.2);
+      }
     </style>
   </head>
   <body>
@@ -351,17 +555,26 @@
     <div class="grid">
       <!-- Run controls -->
       <div class="card panel">
+        <!-- Row 1: buttons (left) + toggles (right) -->
         <div class="row">
-          <div class="kpi"><b>Run</b> start optimization from dashboard</div>
-          <div class="toggleRow">
-            <div class="kpi"><b>FDTD verify</b></div>
-            <input id="fdtdToggle" type="checkbox" />
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <button class="btn" id="runBtn">Run optimization</button>
+            <button class="btn secondary" id="resumeBtn" type="button">Resume</button>
+            <button class="btn secondary" id="stopBtn" type="button">Stop</button>
+            <button class="btn danger" id="resetBtn" type="button">Reset</button>
           </div>
-          <div class="toggleRow">
-            <div class="kpi"><b>Dry-run</b></div>
-            <input id="dryRunToggle" type="checkbox" />
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <div class="toggleRow">
+              <div class="kpi"><b>FDTD verify</b></div>
+              <input id="fdtdToggle" type="checkbox" />
+            </div>
+            <div class="toggleRow">
+              <div class="kpi"><b>Dry-run</b></div>
+              <input id="dryRunToggle" type="checkbox" />
+            </div>
           </div>
         </div>
+        <!-- Row 2: parameters -->
         <div class="controls">
           <div class="field">
             <label for="inDevice">device</label>
@@ -385,9 +598,8 @@
             </select>
           </div>
           <div class="field">
-            <label for="inNumRuns">Number of parallel runs</label>
+            <label for="inNumRuns">parallel runs</label>
             <input id="inNumRuns" type="number" min="1" max="20" step="1" value="1" />
-            <small style="color:#666; margin-top:4px; display:block;">1=single run, 2+=multi-start with seeds: 0, 1000, 2000, ...</small>
           </div>
           <div class="field">
             <label for="inNStart">n_start</label>
@@ -409,10 +621,6 @@
             <label for="inFdtdEvery">fdtd_every</label>
             <input id="inFdtdEvery" type="number" min="0" step="1" value="10" />
           </div>
-          <button class="btn" id="runBtn">Run optimization</button>
-          <button class="btn secondary" id="resumeBtn" type="button">Resume</button>
-          <button class="btn secondary" id="stopBtn" type="button">Stop</button>
-          <button class="btn danger" id="resetBtn" type="button">Reset</button>
         </div>
         <div class="runStatusLabel">Run Status</div>
         <div class="runStatus" id="runStatus">idle</div>
@@ -522,6 +730,7 @@
         <div class="bar"><div id="progFill"></div></div>
         <div class="row" style="margin-top:8px">
           <div class="kpi">loss_total: <b id="kpiLoss">-</b></div>
+          <div class="kpi" id="kpiTime" style="font-family:var(--mono); font-size:11px;"></div>
         </div>
         <div class="chartBox"><canvas id="lossChart"></canvas></div>
         </div>
@@ -685,9 +894,9 @@
 
       function makeLossChart(){
         const ctx = document.getElementById('lossChart');
-        const gridColor = '#e2e8f0';
-        const tickColor = '#94a3b8';
-        const fontFamily = '-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif';
+        const gridColor = '#e4e4e7';
+        const tickColor = '#71717a';
+        const fontFamily = '"Inter", -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif';
         // Define colors for each loss component
         const lossColors = {
           'loss_total': { border: '#1f2937', bg: 'rgba(31,41,55,0.1)' },      // Dark (bold)
@@ -719,7 +928,11 @@
           options: {
             responsive: true,
             maintainAspectRatio: false,
-            animation: false,
+            animation: { duration: 0 },
+            transitions: {
+              active: { animation: { duration: 300, easing: 'easeOutCubic' } },
+              resize: { animation: { duration: 0 } }
+            },
             interaction: { mode: 'index', intersect: false },
             scales: {
               y: {
@@ -746,7 +959,7 @@
                 labels: { usePointStyle: true, pointStyle: 'line', font: { size: 12, family: fontFamily } }
               },
               tooltip: {
-                backgroundColor: '#0f172a',
+                backgroundColor: '#18181b',
                 titleFont: { size: 12, family: fontFamily },
                 bodyFont: { size: 11, family: fontFamily },
                 callbacks: {
@@ -766,26 +979,31 @@
 
       function makeSpecChart(){
         const ctx = document.getElementById('specChart');
-        const gridColor = '#e2e8f0';
-        const tickColor = '#94a3b8';
-        const fontFamily = '-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif';
+        const gridColor = '#e4e4e7';
+        const tickColor = '#71717a';
+        const fontFamily = '"Inter", -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif';
         specChart = new Chart(ctx, {
           type: 'line',
           data: { labels: [], datasets: [
-            // Predicted (forward model): dashed + lighter.
-            { label: 'R pred', data: [], borderColor: 'rgba(239,68,68,0.35)', borderWidth: 2, borderDash: [6,4], pointRadius: 0, tension: 0.4 },
-            { label: 'G pred', data: [], borderColor: 'rgba(34,197,94,0.35)', borderWidth: 2, borderDash: [6,4], pointRadius: 0, tension: 0.4 },
-            { label: 'B pred', data: [], borderColor: 'rgba(59,130,246,0.35)', borderWidth: 2, borderDash: [6,4], pointRadius: 0, tension: 0.4 },
-            // FDTD verified: solid.
-            { label: 'R fdtd', data: [], borderColor: '#ef4444', borderWidth: 2, pointRadius: 0, tension: 0.4, hidden: true },
-            { label: 'G fdtd', data: [], borderColor: '#22c55e', borderWidth: 2, pointRadius: 0, tension: 0.4, hidden: true },
-            { label: 'B fdtd', data: [], borderColor: '#3b82f6', borderWidth: 2, pointRadius: 0, tension: 0.4, hidden: true },
+            // Predicted (surrogate forward model): solid lines, no points.
+            { label: 'R pred', data: [], borderColor: '#ef4444', borderWidth: 2, fill: false, pointRadius: 0, pointHoverRadius: 4, pointStyle: 'circle', showLine: true, tension: 0.4 },
+            { label: 'G pred', data: [], borderColor: '#22c55e', borderWidth: 2, fill: false, pointRadius: 0, pointHoverRadius: 4, pointStyle: 'circle', showLine: true, tension: 0.4 },
+            { label: 'B pred', data: [], borderColor: '#3b82f6', borderWidth: 2, fill: false, pointRadius: 0, pointHoverRadius: 4, pointStyle: 'circle', showLine: true, tension: 0.4 },
+            // FDTD verified: dashed overlay, no points.
+            { label: 'R fdtd', data: [], borderColor: 'rgba(239,68,68,0.5)', borderWidth: 2, borderDash: [6,3], fill: false, pointRadius: 0, pointHoverRadius: 4, pointStyle: 'circle', showLine: true, tension: 0.4, hidden: true },
+            { label: 'G fdtd', data: [], borderColor: 'rgba(34,197,94,0.5)', borderWidth: 2, borderDash: [6,3], fill: false, pointRadius: 0, pointHoverRadius: 4, pointStyle: 'circle', showLine: true, tension: 0.4, hidden: true },
+            { label: 'B fdtd', data: [], borderColor: 'rgba(59,130,246,0.5)', borderWidth: 2, borderDash: [6,3], fill: false, pointRadius: 0, pointHoverRadius: 4, pointStyle: 'circle', showLine: true, tension: 0.4, hidden: true },
           ]},
           options: {
             responsive: true,
             maintainAspectRatio: false,
-            animation: false,
+            animation: { duration: 0 },
+            transitions: {
+              active: { animation: { duration: 300, easing: 'easeOutCubic' } },
+              resize: { animation: { duration: 0 } }
+            },
             parsing: false,
+            elements: { point: { radius: 0, hoverRadius: 4 } },
             interaction: { mode: 'nearest', intersect: false },
             scales: {
               x: {
@@ -809,7 +1027,7 @@
                 labels: { usePointStyle: true, pointStyle: 'line', font: { size: 11, family: fontFamily }, boxWidth: 20 }
               },
               tooltip: {
-                backgroundColor: '#0f172a',
+                backgroundColor: '#18181b',
                 titleFont: { size: 12, family: fontFamily },
                 bodyFont: { size: 11, family: fontFamily }
               }
@@ -844,15 +1062,26 @@
       }
 
       let lastStatus = null;
+      let optimRunning = false;   // track whether optimization is currently running
 
       async function redraw(){
-        // use cached status to update chart options quickly
+        // use cached status to update chart options quickly (with smooth animation)
         if (lastStatus) {
-          applyStatus(lastStatus);
+          applyStatus(lastStatus, true);
         }
       }
 
-      function applyStatus(st){
+      function _fmtTime(ms){
+        const s = Math.floor(ms / 1000);
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        const sec = s % 60;
+        if (h > 0) return `${h}h ${String(m).padStart(2,'0')}m ${String(sec).padStart(2,'0')}s`;
+        if (m > 0) return `${m}m ${String(sec).padStart(2,'0')}s`;
+        return `${sec}s`;
+      }
+
+      function applyStatus(st, animate){
         const meta = st.meta || {};
         const series = st.series || {};
         const steps = series.steps || [];
@@ -869,6 +1098,38 @@
         }
         const lt = Number(latest.loss_total);
         kpiLoss.textContent = Number.isFinite(lt) ? lt.toFixed(6) : '-';
+
+        // Time estimation
+        const kpiTime = document.getElementById('kpiTime');
+        if (kpiTime && meta.ts_start && Number.isFinite(curStep) && Number.isFinite(total) && total > 0) {
+          const tsStart = new Date(meta.ts_start).getTime();
+          // When stopped, freeze elapsed at last data point timestamp; otherwise use live clock
+          let endMs;
+          if (!optimRunning && latest.ts) {
+            endMs = new Date(String(latest.ts).replace('Z','+00:00')).getTime();
+          } else {
+            endMs = Date.now();
+          }
+          const elapsed = endMs - tsStart;
+          if (elapsed > 0 && curStep > 0) {
+            const avgPerStep = elapsed / curStep;
+            if (optimRunning) {
+              const remaining = (total - 1 - curStep) * avgPerStep;
+              const avgStr = avgPerStep >= 1000 ? `${(avgPerStep/1000).toFixed(1)}s` : `${Math.round(avgPerStep)}ms`;
+              kpiTime.textContent = `elapsed: ${_fmtTime(elapsed)}  |  ETA: ${_fmtTime(remaining)}  |  avg/step: ${avgStr}`;
+            } else {
+              // Stopped — show frozen elapsed + avg, no ETA
+              const avgStr = avgPerStep >= 1000 ? `${(avgPerStep/1000).toFixed(1)}s` : `${Math.round(avgPerStep)}ms`;
+              kpiTime.textContent = `elapsed: ${_fmtTime(elapsed)}  |  stopped (${curStep} steps)  |  avg/step: ${avgStr}`;
+            }
+          } else if (elapsed > 0) {
+            kpiTime.textContent = optimRunning ? `elapsed: ${_fmtTime(elapsed)}  |  ETA: calculating...` : `elapsed: ${_fmtTime(elapsed)}  |  stopped`;
+          } else {
+            kpiTime.textContent = '';
+          }
+        } else if (kpiTime) {
+          kpiTime.textContent = '';
+        }
 
         // windowing
         let windowN = ui.window === 'all' ? null : Number(ui.window);
@@ -947,7 +1208,11 @@
           }
         }
 
-        lossChart.update();
+        if (animate) {
+          lossChart.update('active');
+        } else {
+          lossChart.update('none');
+        }
 
         renderLatexFromMeta(meta);
 
@@ -1038,6 +1303,7 @@
           const seedsStatus = rs.seeds_status || {};
           const activeSeeds = rs.active_seeds || [];
           const numRunning = rs.num_running || 0;
+          optimRunning = !!rs.running;   // update global running flag
 
           if (activeSeeds.length > 1 || numRunning > 1) {
             // Multi-seed display
@@ -1077,7 +1343,7 @@
               topkHint.textContent = '';
               return;
             }
-            const perSeedK = Math.max(1, Math.min(8, groups.length));
+            const perSeedK = 3;
             const key = `each:${groups.map(g => `${g.seed}:${g.step}:${g.k}`).join('|')}:${perSeedK}`;
             kpiTopk.textContent = `(each best, seeds=${groups.length}, per-seed K=${perSeedK})`;
             if (key !== ui.lastTopkKey) {
@@ -1255,7 +1521,7 @@
           }
         }
 
-        ctx.strokeStyle = '#e2e8f0';
+        ctx.strokeStyle = '#e4e4e7';
         ctx.lineWidth = 2;
         for (let i=0;i<=3;i++){
           ctx.beginPath();
@@ -1268,8 +1534,8 @@
           ctx.stroke();
         }
 
-        ctx.fillStyle = '#64748b';
-        ctx.font = '12px -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif';
+        ctx.fillStyle = '#71717a';
+        ctx.font = '12px "Inter", -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif';
         const col = ['R','G','B'];
         for (let c=0;c<3;c++){
           const x = padL + c*cellW + cellW/2;
@@ -1327,28 +1593,29 @@
         let dataLoaded = false;
 
         // Determine which seed to use for spectrum
-        let specSeedParam = '';
+        let specExtraParams = '';
         let seedLabel = '';
+        const isMerged = ui._lastMergedTopk && ui._lastMergedTopk.merged;
         if (seedOverride != null && Number.isFinite(Number(seedOverride))) {
           const seed = Number(seedOverride);
-          specSeedParam = `&seed=${seed}`;
+          specExtraParams = `&seed=${seed}`;
           seedLabel = `, seed=${seed}`;
-        } else {
-          const isMerged = ui._lastMergedTopk && ui._lastMergedTopk.merged;
-          if (isMerged && ui._lastMergedTopk.seed_origins && ui._lastMergedTopk.seed_origins[idx] != null) {
-            const seed = ui._lastMergedTopk.seed_origins[idx];
-            specSeedParam = `&seed=${seed}`;
-            seedLabel = `, seed=${seed}`;
+        } else if (isMerged) {
+          // Use merged topk directly — server loads from all-seeds cache
+          specExtraParams = `&merged=1`;
+          if (ui._lastMergedTopk.seed_origins && ui._lastMergedTopk.seed_origins[idx] != null) {
+            seedLabel = `, seed=${ui._lastMergedTopk.seed_origins[idx]}`;
           }
         }
         kpiSpec.textContent = `(step ${step}, k=${idx}${seedLabel})`;
 
         // 1) Try surrogate spectrum (optional)
         try{
-          const specUrl = `/api/topk/${step}/${idx}/spectrum?mode=best${specSeedParam}`;
-          console.log('Loading spectrum:', specUrl);
-          const s = await fetchJSON(specUrl);
-          console.log('Spectrum response:', s);
+          const specUrl = `/api/topk/${step}/${idx}/spectrum?mode=best${specExtraParams}`;
+          const specResp = await fetch(specUrl, {cache:'no-store'});
+          if (!specResp.ok) throw new Error(`spectrum ${specResp.status}`);
+          const s = await specResp.json();
+          if (s.error) console.warn('[spectrum] server:', s.error);
           rgb = s.rgb || null;
           if (rgb && rgb[0] && rgb[0].length) {
             dataLoaded = true;
@@ -1369,7 +1636,7 @@
         // 2) Try FDTD overlay independently (optional)
         if (ui.fdtd === 'on') {
           try{
-            const f = await fetchJSON(`/api/topk/${step}/${idx}/fdtd_spectrum?fallback=1${specSeedParam}`);
+            const f = await fetchJSON(`/api/topk/${step}/${idx}/fdtd_spectrum?fallback=1${specExtraParams}`);
             if (f && f.rgb && f.rgb[0] && f.rgb[0].length) {
               dataLoaded = true;
               frgb = f.rgb;
@@ -1391,7 +1658,7 @@
         // 3) Labels/update/hints - only update chart if data was actually loaded
         specChart.data.labels = [];
         if (dataLoaded) {
-          specChart.update();
+          specChart.update('none');
         }
 
         if (rgb && frgb) {
@@ -1696,47 +1963,62 @@
       tick();
       setInterval(tick, 1200);
 
-      // Restore persisted weight inputs (dashboard-side defaults).
-      function restoreLossInputs(){
-        const set = (id, key, fallback) => {
+      // Restore ALL persisted inputs and auto-save on change.
+      function restoreAllInputs(){
+        // Helper: restore value from localStorage and listen for changes.
+        const bind = (id, key, fallback) => {
           const el = document.getElementById(id);
           if (!el) return;
           const v = localStorage.getItem(key);
           if (v != null && v !== '') el.value = v;
           else el.value = String(fallback);
+          el.addEventListener('change', () => localStorage.setItem(key, el.value));
+          el.addEventListener('input', () => localStorage.setItem(key, el.value));
         };
-        // optimizer type
-        const ot = localStorage.getItem('optimizer_type');
-        const otEl = document.getElementById('inOptimizer');
-        if (otEl) {
-          otEl.value = (ot === 'cmaes' || ot === 'cmaes-multi') ? 'cmaes' : 'ga';
-          otEl.addEventListener('change', () => localStorage.setItem('optimizer_type', otEl.value));
-        }
-        // generator backend
-        const gb = localStorage.getItem('gen_backend');
-        const gbEl = document.getElementById('inGenBackend');
-        if (gbEl) {
-          gbEl.value = (gb === 'rule_mfs_scipy') ? 'rule_mfs_scipy' : 'rule_mfs';
-          gbEl.addEventListener('change', () => localStorage.setItem('gen_backend', gbEl.value));
-        }
-        set('inWPurity', 'loss_w_purity', 1.0);
-        set('inWAbs', 'loss_w_abs', 0.0);
-        set('inWFill', 'loss_w_fill', 1.0);
-        set('inFillMin', 'loss_fill_min', 0.2);
-        set('inFillMax', 'loss_fill_max', 0.5);
-        set('inPurityDistW', 'loss_purity_dist_w', 0);
-        set('inMutP', 'ga_mut_p', 0.2);
-        set('inMutSig', 'ga_mut_sig', 0.15);
-        set('inCloneK', 'ga_clone_k', 8);
-        set('inCloneM', 'ga_clone_m', 0);
-        set('inCloneSigMin', 'ga_clone_sig_min', 0.02);
-        set('inCloneSigMax', 'ga_clone_sig_max', 0.08);
-        set('inCmaSigma0', 'cma_sigma0', 0.3);
-        set('inWR', 'rgb_w_r', 1.0);
-        set('inWG', 'rgb_w_g', 2.0);
-        set('inWB', 'rgb_w_b', 1.0);
+        // Helper for select: restore and bind.
+        const bindSelect = (id, key, fallback, validValues) => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          const v = localStorage.getItem(key);
+          if (v != null && validValues.includes(v)) el.value = v;
+          else el.value = fallback;
+          el.addEventListener('change', () => localStorage.setItem(key, el.value));
+        };
+
+        // Run controls (top row)
+        bindSelect('inDevice', 'run_device', 'cuda', ['cpu', 'cuda']);
+        bindSelect('inOptimizer', 'optimizer_type', 'ga', ['ga', 'cmaes']);
+        bindSelect('inGenBackend', 'gen_backend', 'rule_mfs', ['rule_mfs', 'rule_mfs_scipy']);
+        bind('inNumRuns', 'run_num_runs', 1);
+        bind('inNStart', 'run_n_start', 100);
+        bind('inNSteps', 'run_n_steps', 1000);
+        bind('inTopk', 'run_topk', 10);
+        bind('inChunk', 'run_chunk_size', 32);
+        bind('inFdtdEvery', 'run_fdtd_every', 10);
+
+        // Common parameters
+        bind('inWPurity', 'loss_w_purity', 1.0);
+        bind('inWAbs', 'loss_w_abs', 0.0);
+        bind('inWFill', 'loss_w_fill', 1.0);
+        bind('inFillMin', 'loss_fill_min', 0.2);
+        bind('inFillMax', 'loss_fill_max', 0.5);
+        bind('inPurityDistW', 'loss_purity_dist_w', 0);
+        bind('inWR', 'rgb_w_r', 1.0);
+        bind('inWG', 'rgb_w_g', 2.0);
+        bind('inWB', 'rgb_w_b', 1.0);
+
+        // GA parameters
+        bind('inMutP', 'ga_mut_p', 0.2);
+        bind('inMutSig', 'ga_mut_sig', 0.15);
+        bind('inCloneK', 'ga_clone_k', 8);
+        bind('inCloneM', 'ga_clone_m', 0);
+        bind('inCloneSigMin', 'ga_clone_sig_min', 0.02);
+        bind('inCloneSigMax', 'ga_clone_sig_max', 0.08);
+
+        // CMA-ES parameters
+        bind('inCmaSigma0', 'cma_sigma0', 0.3);
       }
-      restoreLossInputs();
+      restoreAllInputs();
       // Ensure parameter section visibility is correct after restore
       updateOptimizerSections();
     </script>

@@ -581,12 +581,14 @@ class DashboardFDTDScheduler:
             if trigger_step in self.verified_steps:
                 return
             if self.thread is not None and self.thread.is_alive():
+                print(f"[DASHBOARD-FDTD] Skipping step={trigger_step}: worker still running", flush=True)
                 return  # Already running
 
             struct = merged_data.get("struct128_topk")
             loss = merged_data.get("metric_best_loss")
             seed_origins = merged_data.get("seed_origins", [])
             if struct is None or not isinstance(struct, np.ndarray) or struct.ndim != 3:
+                print(f"[DASHBOARD-FDTD] Skipping step={trigger_step}: no valid struct in merged data", flush=True)
                 return
             if struct.shape[0] == 0:
                 return
@@ -1447,8 +1449,24 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
                 return rs.artifacts_info or {"ok": True, "already_saved": True}
 
             _save_log_for_seed(seed, rs)
-            info = dict(_collect_and_save_results(seed, active_seeds, progress_dir, _get_surrogate_for_save()))
-            info["persist_reason"] = reason
+            try:
+                info = dict(_collect_and_save_results(seed, active_seeds, progress_dir, _get_surrogate_for_save()))
+                info["persist_reason"] = reason
+                info["ok"] = True
+            except Exception as exc:
+                import traceback
+                print(f"[dashboard] _persist_seed_artifacts failed: {exc}", file=sys.stderr, flush=True)
+                traceback.print_exc(file=sys.stderr)
+                # Retry without surrogate
+                try:
+                    info = dict(_collect_and_save_results(seed, active_seeds, progress_dir, None))
+                    info["persist_reason"] = reason
+                    info["ok"] = True
+                    info["warning"] = f"saved without surrogate: {exc}"
+                except Exception as exc2:
+                    print(f"[dashboard] fallback save also failed: {exc2}", file=sys.stderr, flush=True)
+                    traceback.print_exc(file=sys.stderr)
+                    info = {"ok": False, "error": str(exc2), "persist_reason": reason}
             rs.artifacts_saved = True
             rs.artifacts_info = info
             return info
@@ -1515,8 +1533,10 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
             rs.last_exit_code = code
             rs.lines.append(f"[dashboard] process exited (seed={seed}, exit={code})")
             _persist_seed_artifacts(seed, rs, reason="process_exit")
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[dashboard] _reader_thread error (seed={seed}): {exc}", file=sys.stderr, flush=True)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
 
     @app.post("/api/run/start")
     def run_start(
@@ -1686,6 +1706,11 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
             cmd += ["--fdtd-verify", "off"]
             fdtd_yaml = str(Path(__file__).resolve().parents[2] / "configs" / "fdtd.yaml")
             paths_yaml = str(Path(__file__).resolve().parents[2] / "configs" / "paths.yaml")
+            # Reset verified_steps on first seed of a new run so FDTD
+            # re-triggers for the same step numbers from a fresh run.
+            if len(active_seeds) == 0:
+                with dash_fdtd.lock:
+                    dash_fdtd.verified_steps.clear()
             if not dash_fdtd.enabled:
                 dash_fdtd.fdtd_every = int(fdtd_every) if int(fdtd_every) > 0 else 10
                 dash_fdtd.fdtd_k = int(fdtd_k) if fdtd_k is not None else 1
@@ -1827,11 +1852,19 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
             except Exception as e:
                 return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
-        # Stop ALL seeds
-        stopped_seeds = []
-        for s in list(active_seeds):
+        # Stop ALL seeds — include already-exited processes so results are
+        # saved even when the user presses Stop after natural completion.
+        all_targets = [s for s in list(active_seeds)
+                       if (rs := rstate_dict.get(s)) is not None
+                       and rs.proc is not None]
+        killed_seeds = []
+        for s in all_targets:
             rs = rstate_dict.get(s)
-            if rs is None or rs.proc is None or rs.proc.poll() is not None:
+            if rs is None or rs.proc is None:
+                continue
+            if rs.proc.poll() is not None:
+                # Already exited — just save log
+                _save_log_for_seed(s, rs)
                 continue
             try:
                 rs.lines.append(f"[dashboard] stopping seed {s}...")
@@ -1846,29 +1879,44 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
                 code = rs.proc.poll()
                 rs.last_exit_code = code
                 rs.lines.append(f"[dashboard] stopped (exit={code})")
-                stopped_seeds.append(s)
+                killed_seeds.append(s)
 
                 # Save log to file
                 _save_log_for_seed(s, rs)
             except Exception:
                 pass
 
-        if not stopped_seeds:
-            # All processes may have already exited naturally; recover from cache if possible.
+        # Save results for ALL targets (killed + already-exited)
+        save_seeds = all_targets if all_targets else []
+        if not save_seeds:
+            # No active seeds at all — try recovering from cache.
             recovered = _recover_cached_results(reason="api_stop_cached_recovery")
             if recovered.get("ok"):
                 return JSONResponse({"ok": True, "stopped": False, **recovered})
             return JSONResponse({"ok": True, "stopped": False, "error": "no running processes"})
 
-        # Collect and save optimization results for all stopped seeds
-        result_info = _collect_and_save_results(None, stopped_seeds, progress_dir, _get_surrogate_for_save())
-        for s in stopped_seeds:
+        # Collect and save optimization results for all seeds
+        try:
+            result_info = _collect_and_save_results(None, save_seeds, progress_dir, _get_surrogate_for_save())
+        except Exception as exc:
+            print(f"[dashboard] _collect_and_save_results failed: {exc}", file=sys.stderr, flush=True)
+            import traceback; traceback.print_exc(file=sys.stderr)
+            # Retry without surrogate
+            try:
+                result_info = _collect_and_save_results(None, save_seeds, progress_dir, None)
+                result_info["warning"] = f"saved without surrogate: {exc}"
+            except Exception as exc2:
+                print(f"[dashboard] fallback save also failed: {exc2}", file=sys.stderr, flush=True)
+                result_info = {"ok": False, "error": str(exc2)}
+
+        for s in save_seeds:
             rs = rstate_dict.get(s)
             if rs is not None:
                 rs.artifacts_saved = True
                 rs.artifacts_info = {**result_info, "persist_reason": "api_stop_all"}
 
-        return JSONResponse({"ok": True, "stopped": True, "stopped_seeds": stopped_seeds, **result_info})
+        return JSONResponse({"ok": True, "stopped": bool(killed_seeds),
+                             "killed_seeds": killed_seeds, "saved_seeds": save_seeds, **result_info})
 
     @app.post("/api/run/reset")
     def run_reset(seed: int | None = Query(default=None)) -> JSONResponse:

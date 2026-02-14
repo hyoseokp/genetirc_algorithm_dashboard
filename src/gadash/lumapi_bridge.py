@@ -119,6 +119,10 @@ class LumapiBridge:
         if self._fdtd is None:
             return
         try:
+            # Allow Lumerical to finish cleanup before closing
+            # (prevents "QProcess: Destroyed while process is still running")
+            import time
+            time.sleep(1.0)
             self._fdtd.close()
         finally:
             self._fdtd = None

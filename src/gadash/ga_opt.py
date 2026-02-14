@@ -23,7 +23,7 @@ from .fdtd_verify import resolve_fdtd_cfg, verify_topk_with_fdtd
 
 def _torch_device(device: str) -> torch.device:
     if device == "cuda" and not torch.cuda.is_available():
-        return torch.device("cpu")
+        raise RuntimeError("CUDA requested but not available. GPU execution is mandatory.")
     return torch.device(device)
 
 

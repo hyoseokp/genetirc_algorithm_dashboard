@@ -1336,7 +1336,7 @@
               topkHint.textContent = '';
               return;
             }
-            const perSeedK = 3;
+            const perSeedK = Math.max(1, Math.min(8, groups.length));
             const key = `each:${groups.map(g => `${g.seed}:${g.step}:${g.k}`).join('|')}:${perSeedK}`;
             kpiTopk.textContent = `(each best, seeds=${groups.length}, per-seed K=${perSeedK})`;
             if (key !== ui.lastTopkKey) {
@@ -1635,10 +1635,9 @@
               frgb = f.rgb;
               fdtdStepUsed = (f.fdtd_step != null) ? Number(f.fdtd_step) : Number(step);
               C = Math.max(C, frgb[0].length);
-              // Display-only transform requested: negate FDTD overlay.
-              specChart.data.datasets[3].data = toXY(frgb[0].map(v => -Number(v)));
-              specChart.data.datasets[4].data = toXY(frgb[1].map(v => -Number(v)));
-              specChart.data.datasets[5].data = toXY(frgb[2].map(v => -Number(v)));
+              specChart.data.datasets[3].data = toXY(frgb[0].map(v => Math.abs(Number(v))));
+              specChart.data.datasets[4].data = toXY(frgb[1].map(v => Math.abs(Number(v))));
+              specChart.data.datasets[5].data = toXY(frgb[2].map(v => Math.abs(Number(v))));
               specChart.data.datasets[3].hidden = false;
               specChart.data.datasets[4].hidden = false;
               specChart.data.datasets[5].hidden = false;

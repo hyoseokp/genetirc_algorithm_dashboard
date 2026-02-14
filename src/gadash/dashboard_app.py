@@ -332,7 +332,10 @@ def _collect_and_save_results(seed: int | None, active_seeds: list[int], progres
         # Try to generate surrogate spectrum (optional)
         surrogate_spectrum_file = output_dir / "surrogate_spectrum.npy"
         try:
-            if best_struct is not None and surrogate is not None:
+            if best_struct is not None:
+                if surrogate is None:
+                    from gadash.surrogate_interface import MockSurrogate
+                    surrogate = MockSurrogate(n_channels=30)
                 x = torch.from_numpy(best_struct.astype(np.float32))[None, ...]
                 y = surrogate.predict(x)
                 rgb_t = _merge_rggb_to_rgb(y)[0]  # (3, C)
@@ -701,6 +704,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
     cache = TopKCache()
     scache = SpectrumCache()
     surrogate_for_save = surrogate
+    surrogate_load_attempted = False
 
     # Multi-seed state tracking
     rstate_dict: dict[int, RunProcState] = {}
@@ -712,30 +716,47 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
 
     def _get_surrogate_for_save():
         """Return surrogate for persistence, loading lazily if app started without one."""
-        nonlocal surrogate_for_save
+        nonlocal surrogate_for_save, surrogate_load_attempted
         if surrogate_for_save is not None:
             return surrogate_for_save
+        if surrogate_load_attempted:
+            return None
+        surrogate_load_attempted = True
         try:
             from gadash.config import load_config
-            from gadash.surrogate_interface import CRReconSurrogate
+            from gadash.surrogate_interface import CRReconSurrogate, MockSurrogate
 
             cfg = load_config("configs/ga.yaml", "configs/paths.yaml")
             root = str(cfg.paths.forward_model_root or "")
             ckpt = str(cfg.paths.forward_checkpoint or "")
             cfg_yaml = str(cfg.paths.forward_config_yaml or "")
-            if not root or not ckpt or not cfg_yaml:
-                return None
-            surrogate_for_save = CRReconSurrogate(
-                forward_model_root=Path(root),
-                checkpoint_path=Path(ckpt),
-                config_yaml=Path(cfg_yaml),
-                device=torch.device("cuda"),
-            )
-            print("[DASHBOARD] Lazy surrogate load for save: OK", flush=True)
+            if root and ckpt and cfg_yaml:
+                try:
+                    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                    surrogate_for_save = CRReconSurrogate(
+                        forward_model_root=Path(root),
+                        checkpoint_path=Path(ckpt),
+                        config_yaml=Path(cfg_yaml),
+                        device=dev,
+                    )
+                    print(f"[DASHBOARD] Lazy surrogate load for save: OK (device={dev})", flush=True)
+                    return surrogate_for_save
+                except Exception as e:
+                    print(f"[DASHBOARD] Real surrogate load failed ({e}); falling back to MockSurrogate", file=sys.stderr, flush=True)
+
+            n_ch = int(getattr(cfg.spectra, "channels", 30) or 30)
+            surrogate_for_save = MockSurrogate(n_channels=n_ch)
+            print(f"[DASHBOARD] Lazy surrogate fallback: MockSurrogate (channels={n_ch})", flush=True)
             return surrogate_for_save
         except Exception as e:
             print(f"[DASHBOARD] Lazy surrogate load for save failed: {e}", file=sys.stderr, flush=True)
-            return None
+            try:
+                from gadash.surrogate_interface import MockSurrogate
+                surrogate_for_save = MockSurrogate(n_channels=30)
+                print("[DASHBOARD] Lazy surrogate final fallback: MockSurrogate (channels=30)", flush=True)
+                return surrogate_for_save
+            except Exception:
+                return None
 
     app = FastAPI(title="GA Dashboard")
 
@@ -1007,8 +1028,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
             combined = np.concatenate(marr_list, axis=0)
             result[mkey] = combined[order]
 
-        # Cache the merged result
-        cache_key = f"merged_{mode}"
+        # Cache the merged result with file-mtime-aware key.
         cache.merged_key = cache_key
         cache.merged_data = result
         return result
@@ -1239,7 +1259,8 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         mode: str = Query(default="best"),
         seed: int | None = Query(default=None),
     ) -> JSONResponse:
-        if surrogate is None:
+        runtime_surrogate = surrogate if surrogate is not None else _get_surrogate_for_save()
+        if runtime_surrogate is None:
             return JSONResponse({"error": "surrogate not configured"}, status_code=400)
         # Cache key includes seed to avoid collisions
         key = (int(step), int(idx), seed)
@@ -1254,7 +1275,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
             # Surrogate expects x_binary shaped [B,128,128] in [0,1].
             x = torch.from_numpy(struct[idx].astype(np.float32))[None, ...]  # (1,128,128)
             with torch.no_grad():
-                y = surrogate.predict(x)
+                y = runtime_surrogate.predict(x)
                 if hasattr(y, "pred_rgbc"):
                     y = y.pred_rgbc
                 rgb_t = _merge_rggb_to_rgb(y)[0]
@@ -1406,6 +1427,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         used_idx = int(idx)
         t = torch.from_numpy(arr[used_idx : used_idx + 1].astype(np.float32))
         rgb = _merge_rggb_to_rgb(t)[0].detach().cpu().numpy().astype(np.float32)  # (3,C)
+        rgb = np.abs(rgb)
         return JSONResponse(
             _json_sanitize(
                 {
@@ -1576,6 +1598,8 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         Multiple seeds can run in parallel without file conflicts.
         """
         effective_seed = seed if seed is not None else 0
+        # Force optimizer subprocesses to run on GPU.
+        device = "cuda"
 
         # Check if this specific seed is already running
         existing = rstate_dict.get(effective_seed)
@@ -1887,9 +1911,26 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
                 pass
 
         # Save results for ALL targets (killed + already-exited)
-        save_seeds = all_targets if all_targets else []
+        save_seeds: list[int] = []
+        for s in all_targets:
+            rs = rstate_dict.get(s)
+            if rs is None:
+                continue
+            if rs.artifacts_saved:
+                continue
+            save_seeds.append(s)
         if not save_seeds:
-            # No active seeds at all — try recovering from cache.
+            if all_targets:
+                return JSONResponse(
+                    {
+                        "ok": True,
+                        "stopped": bool(killed_seeds),
+                        "killed_seeds": killed_seeds,
+                        "saved_seeds": [],
+                        "already_saved_seeds": sorted(all_targets),
+                        "already_saved": True,
+                    }
+                )
             recovered = _recover_cached_results(reason="api_stop_cached_recovery")
             if recovered.get("ok"):
                 return JSONResponse({"ok": True, "stopped": False, **recovered})

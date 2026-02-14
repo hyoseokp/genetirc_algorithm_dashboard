@@ -89,12 +89,14 @@ class CRReconSurrogate:
         get_model = getattr(models, "get_model")
 
         self._model = get_model(model_name, **model_params)
-        self._model.to(self.device)
-        self._model.eval()
 
         ckpt = torch.load(self.checkpoint_path, map_location="cpu")
         state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
         self._model.load_state_dict(state, strict=True)
+
+        # Move to target device AFTER loading weights (load_state_dict overwrites .to())
+        self._model.to(self.device)
+        self._model.eval()
 
         self._map_to_pm1 = bool(cfg.get("data", {}).get("map_to_pm1", True))
 

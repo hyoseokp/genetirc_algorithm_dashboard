@@ -1042,10 +1042,16 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
                 metrics_files.append((p.stat().st_mtime, p))
         if metrics_files:
             metrics_files.sort(reverse=True)
-            return _tail_jsonl(metrics_files[0][1], tail)
+            try:
+                return _tail_jsonl(metrics_files[0][1], tail)
+            except FileNotFoundError:
+                return []
         fallback = pdir / "metrics.jsonl"
         if fallback.exists():
-            return _tail_jsonl(fallback, tail)
+            try:
+                return _tail_jsonl(fallback, tail)
+            except FileNotFoundError:
+                return []
         return []
 
     def _merge_metrics_all_seeds(tail: int) -> list[dict[str, Any]]:
@@ -1055,7 +1061,10 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         """
         all_items: list[dict[str, Any]] = []
         for seed, pdir in _discover_seed_dirs():
-            items = _read_metrics_from(pdir, tail)
+            try:
+                items = _read_metrics_from(pdir, tail)
+            except (FileNotFoundError, OSError):
+                continue
             for it in items:
                 it["seed"] = seed
             all_items.extend(items)

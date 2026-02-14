@@ -1268,7 +1268,10 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
             rgb = scache.rgb
         else:
             target_dir = _get_progress_dir_for_seed(progress_dir, seed)
-            data = _load_topk_from(target_dir, int(step), mode=mode)
+            try:
+                data = _load_topk_from(target_dir, int(step), mode=mode)
+            except FileNotFoundError:
+                return JSONResponse({"error": f"topk file not found for step={step}, seed={seed}"}, status_code=404)
             struct = data["struct128_topk"]
             if idx < 0 or idx >= struct.shape[0]:
                 return JSONResponse({"error": "idx out of range"}, status_code=404)

@@ -1258,21 +1258,41 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         idx: int,
         mode: str = Query(default="best"),
         seed: int | None = Query(default=None),
+        merged: int = Query(default=0),
     ) -> JSONResponse:
         runtime_surrogate = surrogate if surrogate is not None else _get_surrogate_for_save()
         if runtime_surrogate is None:
             return JSONResponse({"error": "surrogate not configured"}, status_code=400)
-        # Cache key includes seed to avoid collisions
-        key = (int(step), int(idx), seed)
+        # Cache key includes seed + merged flag to avoid collisions
+        key = (int(step), int(idx), seed, int(merged))
         if scache.key == key and scache.rgb is not None:
             rgb = scache.rgb
         else:
-            target_dir = _get_progress_dir_for_seed(progress_dir, seed)
-            try:
-                data = _load_topk_from(target_dir, int(step), mode=mode)
-            except FileNotFoundError:
-                return JSONResponse({"error": f"topk file not found for step={step}, seed={seed}"}, status_code=404)
-            struct = data["struct128_topk"]
+            struct = None
+            # merged=1: use merged topk data from all seeds
+            if int(merged) == 1:
+                m = _load_topk_all_seeds(mode=mode)
+                s = m.get("struct128_topk")
+                if isinstance(s, np.ndarray) and s.ndim == 3 and idx < s.shape[0]:
+                    struct = s
+            # seed-specific or fallback
+            if struct is None and seed is not None:
+                target_dir = _get_progress_dir_for_seed(progress_dir, seed)
+                try:
+                    data = _load_topk_from(target_dir, int(step), mode=mode)
+                    struct = data.get("struct128_topk")
+                except FileNotFoundError:
+                    pass
+            # final fallback: try base progress dir
+            if struct is None:
+                try:
+                    data = _load_topk_from(progress_dir, int(step), mode=mode)
+                    struct = data.get("struct128_topk")
+                except FileNotFoundError:
+                    return JSONResponse({"error": f"topk file not found for step={step}, seed={seed}"}, status_code=404)
+
+            if struct is None or not isinstance(struct, np.ndarray) or struct.ndim != 3:
+                return JSONResponse({"error": "no valid struct data"}, status_code=404)
             if idx < 0 or idx >= struct.shape[0]:
                 return JSONResponse({"error": "idx out of range"}, status_code=404)
             # Surrogate expects x_binary shaped [B,128,128] in [0,1].

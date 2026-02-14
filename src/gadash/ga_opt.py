@@ -540,7 +540,7 @@ def _make_child(p1: torch.Tensor, p2: torch.Tensor, alpha: float) -> torch.Tenso
 def run_ga(
     cfg: AppConfig,
     progress_dir: str | Path,
-    device: str = "cpu",
+    device: str = "cuda",
     dry_run: bool = False,
     fdtd_verify: bool = False,
     fdtd_every: int = 0,

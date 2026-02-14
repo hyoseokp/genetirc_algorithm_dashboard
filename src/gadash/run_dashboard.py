@@ -16,7 +16,7 @@ def main() -> int:
     p = argparse.ArgumentParser(prog="gadash dashboard")
     p.add_argument("--progress-dir", default="data/progress")
     p.add_argument("--paths", default="configs/paths.yaml")
-    p.add_argument("--device", default="cpu")
+    p.add_argument("--device", default="cuda")
     p.add_argument("--surrogate", choices=["auto", "crrecon", "none"], default="auto")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8501)

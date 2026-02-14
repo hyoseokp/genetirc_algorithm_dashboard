@@ -76,7 +76,7 @@ def _cma_sample(mean: np.ndarray, sigma: float, C: np.ndarray, lam: int, rng: np
 def run_cmaes(
     cfg: AppConfig,
     progress_dir: str | Path,
-    device: str = "cpu",
+    device: str = "cuda",
     dry_run: bool = False,
     fdtd_verify: bool = False,
     fdtd_every: int = 0,

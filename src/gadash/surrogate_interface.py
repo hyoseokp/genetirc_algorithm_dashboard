@@ -49,7 +49,7 @@ class CRReconSurrogate:
     forward_model_root: Path
     checkpoint_path: Path
     config_yaml: Path
-    device: torch.device = torch.device("cpu")
+    device: torch.device = torch.device("cuda")
 
     def __post_init__(self) -> None:
         self.forward_model_root = Path(self.forward_model_root)

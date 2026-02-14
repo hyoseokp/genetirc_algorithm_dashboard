@@ -729,7 +729,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
                 forward_model_root=Path(root),
                 checkpoint_path=Path(ckpt),
                 config_yaml=Path(cfg_yaml),
-                device=torch.device("cpu"),
+                device=torch.device("cuda"),
             )
             print("[DASHBOARD] Lazy surrogate load for save: OK", flush=True)
             return surrogate_for_save
@@ -1544,7 +1544,7 @@ def create_app(*, progress_dir: Path, surrogate=None) -> FastAPI:
         n_steps: int = Query(default=2000, ge=1),
         topk: int = Query(default=50, ge=1),
         dry_run: int = Query(default=0, ge=0, le=1),
-        device: str = Query(default="cpu"),
+        device: str = Query(default="cuda"),
         chunk_size: int = Query(default=32, ge=1),
         generator_backend: str | None = Query(default=None),
         fdtd_verify: int = Query(default=0, ge=0, le=1),

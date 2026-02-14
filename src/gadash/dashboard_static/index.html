@@ -577,13 +577,6 @@
         <!-- Row 2: parameters -->
         <div class="controls">
           <div class="field">
-            <label for="inDevice">device</label>
-            <select id="inDevice">
-              <option value="cpu">cpu</option>
-              <option value="cuda" selected>cuda</option>
-            </select>
-          </div>
-          <div class="field">
             <label for="inOptimizer">optimizer</label>
             <select id="inOptimizer">
               <option value="ga" selected>GA</option>
@@ -1781,7 +1774,7 @@
           const nStart = Number(document.getElementById('inNStart')?.value || 200);
           const nSteps = Number(document.getElementById('inNSteps')?.value || 2000);
           const topk = Number(document.getElementById('inTopk')?.value || 50);
-          const dev = String(document.getElementById('inDevice')?.value || 'cpu');
+          const dev = 'cuda';
           const optType = String(document.getElementById('inOptimizer')?.value || 'ga');
           const numRuns = Number(document.getElementById('inNumRuns')?.value || 1);
           const isMultiStart = numRuns > 1;
@@ -1904,7 +1897,7 @@
           const nStart = Number(document.getElementById('inNStart')?.value || 200);
           const nSteps = Number(document.getElementById('inNSteps')?.value || 2000);
           const topk = Number(document.getElementById('inTopk')?.value || 50);
-          const dev = String(document.getElementById('inDevice')?.value || 'cpu');
+          const dev = 'cuda';
           const optType = String(document.getElementById('inOptimizer')?.value || 'ga');
           const genBackend = String(document.getElementById('inGenBackend')?.value || 'rule_mfs');
           const chunk = Number(document.getElementById('inChunk')?.value || 32);
@@ -1986,7 +1979,6 @@
         };
 
         // Run controls (top row)
-        bindSelect('inDevice', 'run_device', 'cuda', ['cpu', 'cuda']);
         bindSelect('inOptimizer', 'optimizer_type', 'ga', ['ga', 'cmaes']);
         bindSelect('inGenBackend', 'gen_backend', 'rule_mfs', ['rule_mfs', 'rule_mfs_scipy']);
         bind('inNumRuns', 'run_num_runs', 1);

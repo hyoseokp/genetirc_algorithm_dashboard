@@ -71,19 +71,30 @@ def run_fdtd_batch(
                     try:
                         marker.stage()
                         bridge.import_gds(gds_path=gds_path, cell_name=cell_name)
+                        print(f"[FDTD-RUNNER] Running simulation for id={structure_id}...", flush=True)
                         bridge.run()
+                        print(f"[FDTD-RUNNER] Extracting spectra for id={structure_id}...", flush=True)
                         spectra = bridge.extract_spectra()
                         np.save(paths.spectra_path(structure_id), spectra)
                         marker.commit()
                         done.append(structure_id)
+                        print(f"[FDTD-RUNNER] id={structure_id} completed successfully", flush=True)
                         break
                     except Exception as e:
                         retries += 1
+                        print(f"[FDTD-RUNNER] id={structure_id} attempt {retries} failed: {e}", flush=True)
                         if retries > int(options.max_retries):
                             raise RuntimeError(
                                 f"fdtd item failed: id={int(structure_id)} cell={cell_name} "
                                 f"gds={gds_path} retries={int(options.max_retries)} err={e}"
                             ) from e
+                        # Close and reopen bridge for a clean session on retry
+                        print(f"[FDTD-RUNNER] Reopening FDTD session for retry...", flush=True)
+                        try:
+                            bridge.close()
+                        except Exception:
+                            pass
+                        bridge.open()
         finally:
             bridge.close()
 

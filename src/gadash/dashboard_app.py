@@ -584,14 +584,12 @@ class DashboardFDTDScheduler:
             if trigger_step in self.verified_steps:
                 return
             if self.thread is not None and self.thread.is_alive():
-                print(f"[DASHBOARD-FDTD] Skipping step={trigger_step}: worker still running", flush=True)
                 return  # Already running
 
             struct = merged_data.get("struct128_topk")
             loss = merged_data.get("metric_best_loss")
             seed_origins = merged_data.get("seed_origins", [])
             if struct is None or not isinstance(struct, np.ndarray) or struct.ndim != 3:
-                print(f"[DASHBOARD-FDTD] Skipping step={trigger_step}: no valid struct in merged data", flush=True)
                 return
             if struct.shape[0] == 0:
                 return
